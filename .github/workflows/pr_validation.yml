@@ -1,0 +1,89 @@
+name: PR Validation & SonarCloud Analysis
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+jobs:
+  test:
+    name: Run Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [src]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version-file: ".python-version"
+
+
+      - name: Run tests for ${{ matrix.service }}
+        run: |
+          cd ${{ matrix.service }}
+          uv sync --dev
+          uv run pytest test/ \
+            --cov=. \
+            --cov-report=xml:coverage.xml \
+            --junitxml=test-results.xml
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: reports-${{ matrix.service }}
+          path: |
+            ${{ matrix.service }}/coverage.xml
+            ${{ matrix.service }}/test-results.xml
+          retention-days: 1
+
+
+  sonar:
+    name: SonarCloud Analysis
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21 for SonarScanner
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+          
+      # Descarga el reporte de src directamente en la carpeta 'src/'
+      - name: Download Producer Reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: reports-src
+          path: src
+        continue-on-error: true
+
+        
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
