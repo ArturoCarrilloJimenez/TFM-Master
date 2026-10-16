@@ -9,7 +9,6 @@ __pycache__
 .Python
 .pytest_cache
 .antigravitycli
-uv.lock
 coverage.xml
 test-results.xml
 *.log
