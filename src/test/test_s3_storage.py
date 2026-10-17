@@ -191,3 +191,33 @@ async def test_integration_s3_save_binary_payload(s3_test_env):
     assert response["Body"].read() == binary_data
 
     await repo.close()
+
+
+async def test_get_client_raises_exception_on_bootstrap_failure():
+    """Valida que si aioboto3 falla en client.__aenter__, el error se registre y se relance."""
+    repo = S3StorageRepository(
+        endpoint_url="http://invalid-endpoint",
+        bucket_name="test-bucket"
+    )
+    with patch.object(repo.session, "client") as mock_client_factory:
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__.side_effect = RuntimeError("Fallo de arranque S3")
+        mock_client_factory.return_value = mock_ctx
+
+        with pytest.raises(RuntimeError, match="Fallo de arranque S3"):
+            await repo._get_client()
+
+
+async def test_close_handles_exception_gracefully():
+    """Valida que si __aexit__ falla al cerrar conexiones, se capture el error y no reviente."""
+    repo = S3StorageRepository(
+        endpoint_url="http://localhost:4566",
+        bucket_name="test-bucket"
+    )
+    mock_client = AsyncMock()
+    mock_client.__aexit__.side_effect = RuntimeError("Error en socket close")
+    repo._client = mock_client
+
+    # No debe propagar la excepción
+    await repo.close()
+    mock_client.__aexit__.assert_called_once()

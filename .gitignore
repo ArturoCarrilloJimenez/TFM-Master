@@ -22,3 +22,4 @@ terraform.tfstate.backup
 graphify-out
 */.coverage
 scratch
+.agents
