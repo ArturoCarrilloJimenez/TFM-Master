@@ -2,7 +2,7 @@
 Tests unitarios para la lógica de filtrado y extracción de FNSPID.
 """
 import io
-from src.shared.fnspid_extractor import (
+from shared.fnspid_extractor import (
     normalizar_ticker,
     procesar_stream_noticias,
     ajustar_limite_csv
