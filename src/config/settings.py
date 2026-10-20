@@ -1,4 +1,7 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
@@ -17,7 +20,7 @@ class Settings(BaseSettings):
 
     # Se usa model_config con SettingsConfigDict
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(_ROOT_DIR / ".env", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",  # Opcional: ignora variables extra en el .env
     )
