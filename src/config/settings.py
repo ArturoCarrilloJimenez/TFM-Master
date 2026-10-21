@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     s3_prefix_raw_data: str = "raw-data"
     s3_region: str = default_region_aws
 
+    # WebScrapingDistributed API Producer
+    scraper_api_url: str = "https://webscraping-distributed.duckdns.org"
+    scraper_basic_auth_user: str = ""
+    scraper_basic_auth_password: str = ""
+
     # Se usa model_config con SettingsConfigDict
     model_config = SettingsConfigDict(
         env_file=(_ROOT_DIR / ".env", ".env"),

@@ -6,8 +6,10 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "aioboto3>=15.5.0",
+    "pandas>=3.0.6",
     "pyarrow>=26.0.0",
     "pydantic>=2.14.1",
+    "yfinance>=1.7.0",
 ]
 
 
