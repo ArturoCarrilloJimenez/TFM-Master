@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 from sec.etl_proces_raw_data_8k import (
     clean_text,
     extract_items_from_text,
@@ -42,8 +43,10 @@ def test_extract_items_from_text():
     assert "quarterly dividend" in items[1]["content"]
 
 
-def test_etl_initialization():
-    etl = ETLProcesRawData8K()
+def test_etl_initialization_with_injected_dependencies():
+    mock_compactor = MagicMock()
+    mock_storage = MagicMock()
+    etl = ETLProcesRawData8K(compactor=mock_compactor, storage=mock_storage)
     assert etl.days_window == 7
-    assert etl.source_bucket is not None
-    assert etl.target_bucket is not None
+    assert etl.compactor is mock_compactor
+    assert etl.storage is mock_storage

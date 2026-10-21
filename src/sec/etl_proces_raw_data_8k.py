@@ -1,23 +1,24 @@
-"""ETL simplificado para procesar reportes SEC 8-K desde el scraper al Data Lake del TFM.
+"""ETL para procesar reportes SEC 8-K desde el scraper al Data Lake del TFM.
 
-Descubre dinámicamente los parquets del scraper bajo el job_id, segmenta los
-documentos en ítems individuales (1 a 1), extrae el título y contenido de cada evento,
-y consolida el resultado en Parquet ZSTD en el bucket del TFM.
+Utiliza la infraestructura centralizada del proyecto:
+- ParquetCompactor: Para compactar y comprimir a formato Apache Parquet ZSTD.
+- S3StorageRepository: Para listar, leer y escribir en Cloudflare R2 / S3.
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import io
 import json
 import re
 from typing import Any
 
-import boto3
 import pandas as pd
-import pyarrow as pa
 import pyarrow.parquet as pq
-from botocore.config import Config
 
 from config.settings import settings
+from dependencies.dependencies import get_compactor, get_storage_repository
+from infrastructure.compaction.base import BaseDataCompactor
+from infrastructure.storage.base import BaseStorageRepository
 from shared.logging import Logger
 from shared.tikets import TIKETS
 
@@ -27,7 +28,7 @@ ITEM_HEADER_PATTERN = re.compile(r'Item\s+([1-9]\.[0-9]{2})[\.\:\s\-]*', re.IGNO
 SIGNATURE_PATTERN = re.compile(r'\bSIGNATURE[S]?\b', re.IGNORECASE)
 DATE_ISO_PATTERN = re.compile(r'\b(20[0-2][0-9]-[0-1][0-9]-[0-3][0-9])\b')
 
-# Mapeo inverso de CIK (int) a (ticker, company_name)
+# Mapeo inverso O(1) de CIK (int) a (ticker, company_name)
 CIK_TO_BANK: dict[int, tuple[str, str]] = {
     int(str(cik).upper().replace("CIK", "")): (ticker, company)
     for ticker, (cik, company) in TIKETS.items()
@@ -62,7 +63,6 @@ def extract_items_from_text(raw_text: str) -> list[dict[str, str]]:
 
         if end > start:
             chunk = norm_text[start:end].strip()
-            # Separar título de descripción por el primer punto
             title_part, sep, body_part = chunk.partition('.')
             if len(title_part) < 120 and sep:
                 title = clean_text(title_part)
@@ -91,39 +91,36 @@ def parse_sec_url(url: str) -> tuple[int, str]:
 
 
 class ETLProcesRawData8K:
-    """Pipeline simplificado para transformar 8-Ks crudos a dataset analítico."""
+    """Pipeline para transformar 8-Ks crudos a dataset analítico mediante clases de infraestructura."""
 
     def __init__(
         self,
         job_id: str = "sec-8k-2010-01-01-to-2023-12-31",
         target_key: str = "raw/sec/8k-2010-2023.parquet",
         days_window: int = 7,
+        compactor: BaseDataCompactor | None = None,
+        storage: BaseStorageRepository | None = None,
+        source_bucket: str | None = None,
+        target_bucket: str | None = None,
     ):
         self.job_id = job_id
         self.target_key = target_key
         self.days_window = days_window
-        self.source_bucket = settings.scraper_s3_bucket_name
-        self.target_bucket = settings.s3_bucket_name
+        self.source_bucket = source_bucket or settings.scraper_s3_bucket_name
+        self.target_bucket = target_bucket or settings.s3_bucket_name
 
-        self.s3 = boto3.client(
-            "s3",
-            endpoint_url=settings.s3_endpoint_url,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-            region_name="auto",
-            config=Config(s3={"addressing_style": "path"}),
-        )
+        self.compactor = compactor or get_compactor()
+        self.storage = storage or get_storage_repository()
 
-    def _listar_partes(self) -> list[str]:
+    async def _listar_partes(self) -> list[str]:
         """Descubre las partes del job_id acotadas a la ventana de la última semana."""
         prefix = f"compacted-data/job_id={self.job_id}/"
         today = datetime.now(timezone.utc).date()
         valid_dates = {(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(-1, self.days_window + 1)}
 
-        resp = self.s3.list_objects_v2(Bucket=self.source_bucket, Prefix=prefix)
+        all_keys = await self.storage.list_keys(prefix=prefix, bucket=self.source_bucket)
         keys: list[str] = []
-        for obj in resp.get("Contents", []):
-            k = obj["Key"]
+        for k in all_keys:
             if not k.endswith(".parquet"):
                 continue
             date_m = re.search(r'year=(\d{4})/month=(\d{2})/day=(\d{2})', k)
@@ -132,14 +129,19 @@ class ETLProcesRawData8K:
 
         return keys
 
-    def ejecutar(self) -> pd.DataFrame:
-        """Descarga, procesa y publica el dataset 8-K estructurado en R2."""
-        keys = self._listar_partes()
+    async def run(self) -> pd.DataFrame:
+        """Descarga, procesa y publica el dataset 8-K estructurado usando la infraestructura del proyecto."""
+        keys = await self._listar_partes()
         if not keys:
             raise FileNotFoundError(f"No se encontraron partes para job_id={self.job_id}")
 
         logger.info(f"Procesando {len(keys)} partes desde s3://{self.source_bucket}/...")
-        dfs = [pq.read_table(io.BytesIO(self.s3.get_object(Bucket=self.source_bucket, Key=k)["Body"].read())).to_pandas() for k in keys]
+        dfs: list[pd.DataFrame] = []
+        for key in keys:
+            data_bytes = await self.storage.get(key=key, bucket=self.source_bucket)
+            table = pq.read_table(io.BytesIO(data_bytes))
+            dfs.append(table.to_pandas())
+
         df_source = pd.concat(dfs, ignore_index=True)
 
         records: list[dict[str, Any]] = []
@@ -169,11 +171,17 @@ class ETLProcesRawData8K:
         df_out = pd.DataFrame(records)
         logger.info(f"Dataset generado: {len(df_out)} items desde {len(df_source)} documentos.")
 
-        buffer = io.BytesIO()
-        pq.write_table(pa.Table.from_pandas(df_out), buffer, compression="ZSTD")
-        self.s3.put_object(Bucket=self.target_bucket, Key=self.target_key, Body=buffer.getvalue())
+        # 1. Compactación columnar usando ParquetCompactor
+        parquet_bytes = self.compactor.compact(records, compression="ZSTD")
+
+        # 2. Persistencia en Data Lake usando S3StorageRepository
+        await self.storage.save(key=self.target_key, body=parquet_bytes, bucket=self.target_bucket)
         logger.info(f"Guardado exitosamente en s3://{self.target_bucket}/{self.target_key}")
         return df_out
+
+    def ejecutar(self) -> pd.DataFrame:
+        """Punto de entrada síncrono para scripts de ejecución directa."""
+        return asyncio.run(self.run())
 
 
 if __name__ == "__main__":
