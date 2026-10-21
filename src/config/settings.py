@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     default_region_aws: str = "us-east-1"
     # s3
     s3_endpoint_url: str = "http://localhost:9000"  # URL del endpoint de S3 local
-    s3_bucket_name: str = "scraping-data-lake"  # Nombre del bucket S3 por defecto
+    s3_bucket_name: str = "scraping-data-lake"  # Nombre del bucket S3 por defecto (destino TFM)
+    scraper_s3_bucket_name: str = "scraping-data-lake"  # Nombre del bucket S3 donde el scraper guarda datos
     # Prefijo de las claves de S3 para los datos crudos
     s3_prefix_raw_data: str = "raw-data"
     s3_region: str = default_region_aws

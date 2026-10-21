@@ -38,7 +38,6 @@ class S3StorageRepository(BaseStorageRepository):
                 aws_secret_access_key=settings.aws_secret_access_key,
                 config=config
             )
-            # Poblamos la referencia entrando explícitamente en el gestor de contexto asíncrono
             self._client = await client_context.__aenter__()
             log.info(
                 f"Conectado a S3 con éxito. Bucket asignado: [{self.bucket_name}] | Endpoint: {self.endpoint_url}")
@@ -47,36 +46,38 @@ class S3StorageRepository(BaseStorageRepository):
         except Exception as e:
             log.error(
                 f"Fallo crítico al conectar con S3 durante el arranque: {e}")
-            raise  # Reventamos el proceso en el segundo cero
+            raise
 
     async def save(self, key: str, body: str | bytes) -> None:
-        """
-        Escribe los bytes del fragmento acumulado sin evaluar estados internos ni cerrojos.
-        """
+        """Escribe los bytes del fragmento en la coordenada de S3/R2 respetando rutas absolutas del data lake."""
+        clean_key = key.lstrip('/')
+        if clean_key.startswith(("raw/", "processed/", "curated/")) or not self.prefix_raw_data:
+            target_key = clean_key
+        else:
+            target_key = f"{self.prefix_raw_data.rstrip('/')}/{clean_key}"
+
         client = await self._get_client()
-        new_key = f"{self.prefix_raw_data}/{key}"
         try:
             await client.put_object(
                 Bucket=self.bucket_name,
-                Key=new_key,
+                Key=target_key,
                 Body=body
             )
             log.info(
-                f"Bloque de datos (.jsonl) persistido con éxito en S3. Ruta: {new_key}")
+                f"Bloque persistido con éxito en S3. Ruta: [{target_key}]")
         except Exception as e:
             log.error(
-                f"Error de red al escribir objeto en S3 bajo la clave [{new_key}]: {e}")
+                f"Error de red al escribir objeto en S3 bajo la clave [{target_key}]: {e}")
             raise
 
     async def close(self) -> None:
-        """
-        Drenado y apagado controlado del pool de conexiones.
-        """
+        """Drenado y apagado controlado del pool de conexiones."""
         if self._client:
             try:
                 await self._client.__aexit__(None, None, None)
                 log.info(
                     "Canales del pool de almacenamiento S3 cerrados de forma limpia.")
             except Exception as e:
-                log.error(
-                    f"Error al cerrar las conexiones físicas de S3: {e}")
+                log.error(f"Error al cerrar la sesión cliente de S3: {e}")
+            finally:
+                self._client = None
