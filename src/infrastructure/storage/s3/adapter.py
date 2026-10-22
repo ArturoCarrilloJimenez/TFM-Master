@@ -23,12 +23,11 @@ class S3StorageRepository(BaseStorageRepository):
             return self._client
         
         config = Config(
-            max_pool_connections=250,  # Capacidad masiva para tus tareas concurrentes
+            max_pool_connections=250,
             retries={'max_attempts': 5, 'mode': 'standard'}
         )
 
-        log.info(
-            "Abriendo canal persistente con el almacenamiento de objetos S3 (Bootstrap Phase)...")
+        log.info("Abriendo canal persistente con el almacenamiento de objetos S3 (Bootstrap Phase)...")
         try:
             client_context = self.session.client(
                 "s3",
@@ -38,45 +37,68 @@ class S3StorageRepository(BaseStorageRepository):
                 aws_secret_access_key=settings.aws_secret_access_key,
                 config=config
             )
-            # Poblamos la referencia entrando explícitamente en el gestor de contexto asíncrono
             self._client = await client_context.__aenter__()
-            log.info(
-                f"Conectado a S3 con éxito. Bucket asignado: [{self.bucket_name}] | Endpoint: {self.endpoint_url}")
-
+            log.info(f"Conectado a S3 con éxito. Bucket por defecto: [{self.bucket_name}] | Endpoint: {self.endpoint_url}")
             return self._client
         except Exception as e:
-            log.error(
-                f"Fallo crítico al conectar con S3 durante el arranque: {e}")
-            raise  # Reventamos el proceso en el segundo cero
+            log.error(f"Fallo crítico al conectar con S3 durante el arranque: {e}")
+            raise
 
-    async def save(self, key: str, body: str | bytes) -> None:
-        """
-        Escribe los bytes del fragmento acumulado sin evaluar estados internos ni cerrojos.
-        """
+    async def save(self, key: str, body: str | bytes, bucket: str | None = None) -> None:
+        """Escribe bytes en S3/R2 respetando rutas canónicas del Data Lake."""
+        target_bucket = bucket or self.bucket_name
+        clean_key = key.lstrip('/')
+        if clean_key.startswith(("raw/", "processed/", "curated/", "compacted-data/")) or not self.prefix_raw_data:
+            target_key = clean_key
+        else:
+            target_key = f"{self.prefix_raw_data.rstrip('/')}/{clean_key}"
+
         client = await self._get_client()
-        new_key = f"{self.prefix_raw_data}/{key}"
         try:
             await client.put_object(
-                Bucket=self.bucket_name,
-                Key=new_key,
+                Bucket=target_bucket,
+                Key=target_key,
                 Body=body
             )
-            log.info(
-                f"Bloque de datos (.jsonl) persistido con éxito en S3. Ruta: {new_key}")
+            log.info(f"Bloque persistido con éxito en s3://{target_bucket}/{target_key}")
         except Exception as e:
-            log.error(
-                f"Error de red al escribir objeto en S3 bajo la clave [{new_key}]: {e}")
+            log.error(f"Error al escribir en s3://{target_bucket}/{target_key}: {e}")
+            raise
+
+    async def get(self, key: str, bucket: str | None = None) -> bytes:
+        """Descarga y devuelve los bytes crudos de un objeto en S3/R2."""
+        target_bucket = bucket or self.bucket_name
+        client = await self._get_client()
+        try:
+            response = await client.get_object(Bucket=target_bucket, Key=key)
+            async with response["Body"] as stream:
+                return await stream.read()
+        except Exception as e:
+            log.error(f"Error al leer de s3://{target_bucket}/{key}: {e}")
+            raise
+
+    async def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        """Lista todas las claves de objetos que coincidan con un prefijo."""
+        target_bucket = bucket or self.bucket_name
+        client = await self._get_client()
+        try:
+            keys: list[str] = []
+            paginator = client.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(Bucket=target_bucket, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    keys.append(obj["Key"])
+            return keys
+        except Exception as e:
+            log.error(f"Error al listar prefijo s3://{target_bucket}/{prefix}: {e}")
             raise
 
     async def close(self) -> None:
-        """
-        Drenado y apagado controlado del pool de conexiones.
-        """
+        """Drenado y apagado controlado del pool de conexiones."""
         if self._client:
             try:
                 await self._client.__aexit__(None, None, None)
-                log.info(
-                    "Canales del pool de almacenamiento S3 cerrados de forma limpia.")
+                log.info("Canales del pool de almacenamiento S3 cerrados de forma limpia.")
             except Exception as e:
-                log.error(
-                    f"Error al cerrar las conexiones físicas de S3: {e}")
+                log.error(f"Error al cerrar la sesión cliente de S3: {e}")
+            finally:
+                self._client = None
