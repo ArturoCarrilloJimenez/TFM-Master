@@ -19,6 +19,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0.0",
     "moto[server]>=5.0.0",
+    "ipykernel>=7.4.0",
 ]
 
 

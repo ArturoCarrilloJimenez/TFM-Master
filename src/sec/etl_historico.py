@@ -125,8 +125,12 @@ class SECHistoricalETL:
                         "form": f.form,
                         "filing_date": f.filing_date,
                         "report_date": f.report_date,
+                        "acceptance_date_time": f.acceptance_date_time,
                         "accession_number": f.accession_number,
                         "items": f.items,
+                        "primary_document": f.primary_document,
+                        "primary_doc_description": f.primary_doc_description,
+                        "document_url": f.document_url,
                         "index_url": f.index_url,
                     },
                 )

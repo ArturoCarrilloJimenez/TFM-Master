@@ -1,8 +1,11 @@
 """ETL para procesar reportes SEC 8-K desde el scraper al Data Lake del TFM.
 
-Utiliza la infraestructura centralizada del proyecto:
-- ParquetCompactor: Para compactar y comprimir a formato Apache Parquet ZSTD.
-- S3StorageRepository: Para listar, leer y escribir en Cloudflare R2 / S3.
+Aprovecha el nuevo esquema enriquecido del scraper deserializando directamente el
+campo 'context' para heredar el 100% de los metadatos regulatorios (idénticos a los 10-K/Q):
+filing_date, report_date, acceptance_date_time, accession_number, index_url, etc.
+
+Segmenta los eventos en relación 1 a 1 para alimentar modelos NLP (FinBERT) y
+utiliza la infraestructura centralizada del proyecto (ParquetCompactor y S3StorageRepository).
 """
 
 import asyncio
@@ -20,19 +23,11 @@ from dependencies.dependencies import get_compactor, get_storage_repository
 from infrastructure.compaction.base import BaseDataCompactor
 from infrastructure.storage.base import BaseStorageRepository
 from shared.logging import Logger
-from shared.tikets import TIKETS
 
 logger = Logger("ETLProcesRawData8K")
 
 ITEM_HEADER_PATTERN = re.compile(r'Item\s+([1-9]\.[0-9]{2})[\.\:\s\-]*', re.IGNORECASE)
 SIGNATURE_PATTERN = re.compile(r'\bSIGNATURE[S]?\b', re.IGNORECASE)
-DATE_ISO_PATTERN = re.compile(r'\b(20[0-2][0-9]-[0-1][0-9]-[0-3][0-9])\b')
-
-# Mapeo inverso O(1) de CIK (int) a (ticker, company_name)
-CIK_TO_BANK: dict[int, tuple[str, str]] = {
-    int(str(cik).upper().replace("CIK", "")): (ticker, company)
-    for ticker, (cik, company) in TIKETS.items()
-}
 
 
 def clean_text(text: str) -> str:
@@ -63,6 +58,7 @@ def extract_items_from_text(raw_text: str) -> list[dict[str, str]]:
 
         if end > start:
             chunk = norm_text[start:end].strip()
+            # Separar título de descripción por el primer punto
             title_part, sep, body_part = chunk.partition('.')
             if len(title_part) < 120 and sep:
                 title = clean_text(title_part)
@@ -82,14 +78,6 @@ def extract_items_from_text(raw_text: str) -> list[dict[str, str]]:
     return items
 
 
-def parse_sec_url(url: str) -> tuple[int, str]:
-    """Extrae CIK y accession number de la URL oficial de la SEC."""
-    match = re.search(r'/data/(\d+)/(\d{10})(\d{2})(\d{6})/', url)
-    if match:
-        return int(match.group(1)), f"{match.group(2)}-{match.group(3)}-{match.group(4)}"
-    return 0, ""
-
-
 class ETLProcesRawData8K:
     """Pipeline para transformar 8-Ks crudos a dataset analítico mediante clases de infraestructura."""
 
@@ -98,6 +86,7 @@ class ETLProcesRawData8K:
         job_id: str = "sec-8k-2010-01-01-to-2023-12-31",
         target_key: str = "raw/sec/8k-2010-2023.parquet",
         days_window: int = 7,
+        compact_dates: list[str] | None = None,
         compactor: BaseDataCompactor | None = None,
         storage: BaseStorageRepository | None = None,
         source_bucket: str | None = None,
@@ -106,6 +95,7 @@ class ETLProcesRawData8K:
         self.job_id = job_id
         self.target_key = target_key
         self.days_window = days_window
+        self.compact_dates = compact_dates
         self.source_bucket = source_bucket or settings.scraper_s3_bucket_name
         self.target_bucket = target_bucket or settings.s3_bucket_name
 
@@ -113,10 +103,13 @@ class ETLProcesRawData8K:
         self.storage = storage or get_storage_repository()
 
     async def _listar_partes(self) -> list[str]:
-        """Descubre las partes del job_id acotadas a la ventana de la última semana."""
+        """Descubre las partes del job_id acotadas a las fechas válidas (por defecto hoy)."""
         prefix = f"compacted-data/job_id={self.job_id}/"
-        today = datetime.now(timezone.utc).date()
-        valid_dates = {(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(-1, self.days_window + 1)}
+        if self.compact_dates:
+            valid_dates = set(self.compact_dates)
+        else:
+            today = datetime.now(timezone.utc).date()
+            valid_dates = {(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(self.days_window)}
 
         all_keys = await self.storage.list_keys(prefix=prefix, bucket=self.source_bucket)
         keys: list[str] = []
@@ -124,13 +117,13 @@ class ETLProcesRawData8K:
             if not k.endswith(".parquet"):
                 continue
             date_m = re.search(r'year=(\d{4})/month=(\d{2})/day=(\d{2})', k)
-            if not date_m or f"{date_m.group(1)}-{date_m.group(2)}-{date_m.group(3)}" in valid_dates:
+            if date_m and f"{date_m.group(1)}-{date_m.group(2)}-{date_m.group(3)}" in valid_dates:
                 keys.append(k)
 
-        return keys
+        return sorted(keys, reverse=True)
 
     async def run(self) -> pd.DataFrame:
-        """Descarga, procesa y publica el dataset 8-K estructurado usando la infraestructura del proyecto."""
+        """Descarga, procesa y publica el dataset 8-K estructurado usando context y la infraestructura."""
         keys = await self._listar_partes()
         if not keys:
             raise FileNotFoundError(f"No se encontraron partes para job_id={self.job_id}")
@@ -147,25 +140,50 @@ class ETLProcesRawData8K:
         records: list[dict[str, Any]] = []
         for _, row in df_source.iterrows():
             url = row["url"]
-            cik, accession = parse_sec_url(url)
-            ticker, company_name = CIK_TO_BANK.get(cik, ("UNKNOWN", "Unknown Financial Institution"))
+
+            # Deserializar contexto de negocio inyectado por el scraper
+            ctx_raw = row.get("context")
+            if isinstance(ctx_raw, str):
+                try:
+                    ctx = json.loads(ctx_raw)
+                except Exception:
+                    ctx = {}
+            elif isinstance(ctx_raw, dict):
+                ctx = ctx_raw
+            else:
+                ctx = {}
+
+            ticker = ctx.get("ticker", "UNKNOWN")
+            company_name = ctx.get("company_name", "Unknown Financial Institution")
+            cik = ctx.get("cik", 0)
+            form = ctx.get("form", "8-K")
+            filing_date = ctx.get("filing_date", str(row["date"])[:10])
+            report_date = ctx.get("report_date", filing_date)
+            acceptance_date_time = ctx.get("acceptance_date_time", "")
+            accession_number = ctx.get("accession_number", "")
+            primary_document = ctx.get("primary_document", "")
+            primary_doc_description = ctx.get("primary_doc_description", "")
+            index_url = ctx.get("index_url", "")
 
             raw_text = " ".join(json.loads(row["data"]).get("body_text", []))
-            date_m = DATE_ISO_PATTERN.search(raw_text[:800])
-            filing_date = date_m.group(1) if date_m else str(row["date"])[:10]
 
             for item in extract_items_from_text(raw_text):
                 records.append({
                     "ticker": ticker,
                     "company_name": company_name,
                     "cik": cik,
-                    "form": "8-K",
+                    "form": form,
                     "filing_date": filing_date,
-                    "accession_number": accession,
+                    "report_date": report_date,
+                    "acceptance_date_time": acceptance_date_time,
+                    "accession_number": accession_number,
                     "item": item["item"],
                     "item_description": item["item_description"],
                     "content": item["content"],
+                    "primary_document": primary_document,
+                    "primary_doc_description": primary_doc_description,
                     "document_url": url,
+                    "index_url": index_url,
                 })
 
         df_out = pd.DataFrame(records)

@@ -1,9 +1,8 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from sec.etl_proces_raw_data_8k import (
     clean_text,
     extract_items_from_text,
-    parse_sec_url,
     ETLProcesRawData8K,
 )
 
@@ -11,13 +10,6 @@ from sec.etl_proces_raw_data_8k import (
 def test_clean_text():
     dirty = "Line 1 \x00 with  spaces\t and \ufffd artifact  "
     assert clean_text(dirty) == "Line 1 with spaces and artifact"
-
-
-def test_parse_sec_url():
-    url = "https://www.sec.gov/Archives/edgar/data/19617/000001961723000063/jpm-20230113.htm"
-    cik, accession = parse_sec_url(url)
-    assert cik == 19617
-    assert accession == "0000019617-23-000063"
 
 
 def test_extract_items_from_text():
