@@ -10,7 +10,7 @@ os.environ["AWS_SECRET_ACCESS_KEY"] = "mock_secret"
 os.environ["S3_ENDPOINT_URL"] = "https://mock.eu.r2.cloudflarestorage.com"
 os.environ["S3_BUCKET_NAME"] = "mock_bucket"
 
-from src.shared.fnspid_extractor_v2 import (
+from shared.fnspid_extractor_v2 import (
     _limpiar_ticker,
     clasificar_fila,
     _construir_filas_capturadas,
@@ -54,7 +54,7 @@ def test_construir_filas():
     assert nuevas[0]["Stock_symbol"] == "MS"
     assert nuevas[0]["Fuente_Archivo"] == "test_fuente"
 
-@patch("src.shared.fnspid_extractor.urllib.request.urlopen")
+@patch("shared.fnspid_extractor_v2.urllib.request.urlopen")
 def test_procesar_fuente_streaming(mock_urlopen):
     # Simulamos un CSV en memoria para no descargar nada de internet
     csv_content = b"Stock_symbol,Article_title,Url\nMS,Fake news,http://\n,Goldman Sachs sube,http://\n"
