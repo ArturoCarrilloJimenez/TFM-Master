@@ -36,12 +36,11 @@ jobs:
         with:
           python-version-file: ".python-version"
 
-
       - name: Run tests for ${{ matrix.service }}
         run: |
           cd ${{ matrix.service }}
           uv sync --dev
-          uv run pytest test/ \
+          uv run python -m pytest test/ \ 
             --cov=. \
             --cov-report=xml:coverage.xml \
             --junitxml=test-results.xml
