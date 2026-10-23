@@ -199,7 +199,8 @@ def procesar_fuente_streaming(fuente_nombre: str, url_csv: str, registros: list)
     except Exception as e:
         print(f"\n[AVISO] Interrupción o fin de stream en {fuente_nombre} tras {total_leidos:,} filas: {e}")
 
-
+if __name__ == '__main__': 
+    
 # 4. Ejecución del pipeline de lectura
 registros_totales = []
 for nombre_fuente, url_archivo in URLS_HF_CSV.items():
