@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "aioboto3>=15.5.0",
+    "boto3>=1.40.61",
     "duckdb>=2.0.0",
     "matplotlib>=3.11.2",
     "pandas>=3.0.6",

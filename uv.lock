@@ -2586,6 +2586,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aioboto3" },
+    { name = "boto3" },
     { name = "duckdb" },
     { name = "matplotlib" },
     { name = "pandas" },
@@ -2607,6 +2608,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aioboto3", specifier = ">=15.5.0" },
+    { name = "boto3", specifier = ">=1.40.61" },
     { name = "duckdb", specifier = ">=2.0.0" },
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "pandas", specifier = ">=3.0.6" },
