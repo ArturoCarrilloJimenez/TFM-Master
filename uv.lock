@@ -2599,10 +2599,12 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "ipykernel" },
+    { name = "matplotlib" },
     { name = "moto", extra = ["server"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "seaborn" },
 ]
 
 [package.metadata]
@@ -2621,10 +2623,12 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "ipykernel", specifier = ">=7.4.0" },
+    { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "moto", extras = ["server"], specifier = ">=5.0.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "pytest-cov", specifier = ">=5.0.0" },
+    { name = "seaborn", specifier = ">=0.13.2" },
 ]
 
 [[package]]

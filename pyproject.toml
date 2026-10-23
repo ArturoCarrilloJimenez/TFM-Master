@@ -24,6 +24,8 @@ dev = [
     "pytest-cov>=5.0.0",
     "moto[server]>=5.0.0",
     "ipykernel>=7.4.0",
+    "matplotlib>=3.11.2",
+    "seaborn>=0.13.2",
 ]
 
 
