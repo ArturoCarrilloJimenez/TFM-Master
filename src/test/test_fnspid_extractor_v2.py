@@ -10,8 +10,7 @@ os.environ["AWS_SECRET_ACCESS_KEY"] = "mock_secret"
 os.environ["S3_ENDPOINT_URL"] = "https://mock.eu.r2.cloudflarestorage.com"
 os.environ["S3_BUCKET_NAME"] = "mock_bucket"
 
-# Cambia "src.shared.fnspid_extractor" por la ruta correcta si es diferente
-from src.shared.fnspid_extractor import (
+from src.shared.fnspid_extractor_v2 import (
     _limpiar_ticker,
     clasificar_fila,
     _construir_filas_capturadas,
