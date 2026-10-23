@@ -36,7 +36,6 @@ jobs:
         with:
           python-version-file: ".python-version"
 
-
       - name: Run tests for ${{ matrix.service }}
         run: |
           cd ${{ matrix.service }}
