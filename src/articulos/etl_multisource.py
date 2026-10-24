@@ -4,27 +4,19 @@ Extrae de los parquets locales, separa explícitamente en 'title' (titular) y 'a
 normaliza, enriquece, deduplica y carga a Cloudflare R2 bajo 'raw/huggingface/multisource_bancos_2010_2023.parquet'.
 """
 
-import os
 import sys
 from pathlib import Path
 import duckdb
 import pandas as pd
 import boto3
-from dotenv import load_dotenv, find_dotenv
 
 # Asegurar path para módulos del proyecto
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.shared.tikets import TIKETS
-
-load_dotenv(find_dotenv(usecwd=True))
-
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+from config.settings import settings
+from shared.tikets import TIKETS
 
 DATA_DIR = PROJECT_ROOT / "src" / "data" / "financial_news_multisource" / "data"
 LOCAL_OUTPUT = PROJECT_ROOT / "src" / "data" / "multisource_bancos_2010_2023.parquet"
@@ -208,28 +200,28 @@ def save_and_upload(df: pd.DataFrame) -> None:
     LOCAL_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     print(f"Guardando Parquet comprimido en: {LOCAL_OUTPUT}")
     df.to_parquet(LOCAL_OUTPUT, compression="zstd", index=False)
-    file_size_mb = os.path.getsize(LOCAL_OUTPUT) / (1024 * 1024)
+    file_size_mb = LOCAL_OUTPUT.stat().st_size / (1024 * 1024)
     print(f"-> Archivo local generado exitosamente: {file_size_mb:.2f} MB")
 
     # 2. Conectar a S3/R2
-    print(f"\nConectando a Cloudflare R2:")
-    print(f"  Bucket: {S3_BUCKET_NAME}")
+    print("\nConectando a Cloudflare R2:")
+    print(f"  Bucket: {settings.s3_bucket_name}")
     print(f"  Destino: {R2_OBJECT_KEY}")
 
     s3 = boto3.client(
         "s3",
-        endpoint_url=S3_ENDPOINT_URL,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name="us-east-1"
+        endpoint_url=settings.s3_endpoint_url,
+        aws_access_key_id=settings.aws_access_key_id,
+        aws_secret_access_key=settings.aws_secret_access_key,
+        region_name=settings.s3_region,
     )
 
     print("Subiendo a R2...")
-    s3.upload_file(str(LOCAL_OUTPUT), S3_BUCKET_NAME, R2_OBJECT_KEY)
+    s3.upload_file(str(LOCAL_OUTPUT), settings.s3_bucket_name, R2_OBJECT_KEY) # NOSONAR
     print("-> Subida a R2 completada con éxito.")
 
     # 3. Verificar en R2
-    head = s3.head_object(Bucket=S3_BUCKET_NAME, Key=R2_OBJECT_KEY)
+    head = s3.head_object(Bucket=settings.s3_bucket_name, Key=R2_OBJECT_KEY) # NOSONAR
     r2_size_mb = head["ContentLength"] / (1024 * 1024)
     print(f"-> Verificación R2: Tamaño={r2_size_mb:.2f} MB | LastModified={head['LastModified']}")
     print("=" * 70)
