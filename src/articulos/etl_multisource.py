@@ -1,7 +1,7 @@
 """
 ETL Job: Procesamiento y carga del dataset multisource para los 6 bancos (2010-2023).
-Extrae de los parquets locales, normaliza, enriquece, deduplica y carga a Cloudflare R2
-bajo la ruta 'raw/huggingface/multisource_bancos_2010_2023.parquet'.
+Extrae de los parquets locales, separa explícitamente en 'title' (titular) y 'article' (cuerpo),
+normaliza, enriquece, deduplica y carga a Cloudflare R2 bajo 'raw/huggingface/multisource_bancos_2010_2023.parquet'.
 """
 
 import os
@@ -29,6 +29,21 @@ S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 DATA_DIR = PROJECT_ROOT / "src" / "data" / "financial_news_multisource" / "data"
 LOCAL_OUTPUT = PROJECT_ROOT / "src" / "data" / "multisource_bancos_2010_2023.parquet"
 R2_OBJECT_KEY = "raw/huggingface/multisource_bancos_2010_2023.parquet"
+
+
+def extraer_title_y_article(raw_text: str) -> tuple[str, str]:
+    """Separa el texto en titular (primera línea) y cuerpo del artículo (resto del texto)."""
+    if not raw_text or pd.isna(raw_text):
+        return "", ""
+    raw = str(raw_text).strip()
+    if "\n" in raw:
+        parts = raw.split("\n", 1)
+        title = parts[0].strip()
+        article = parts[1].strip()
+    else:
+        title = raw
+        article = ""
+    return title, article
 
 
 def extract_and_transform() -> pd.DataFrame:
@@ -140,12 +155,22 @@ def extract_and_transform() -> pd.DataFrame:
     df = df.dropna(subset=["datetime"]).copy()
     df["date"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    # Deduplicación estricta (mismo ticker, fecha y texto)
+    # Separación explícita en 'title' (titular) y 'article' (cuerpo)
+    print("Separando textos en 'title' (titular) y 'article' (cuerpo extenso)...")
+    splits = df["text"].apply(extraer_title_y_article)
+    df["title"] = [s[0] for s in splits]
+    df["article"] = [s[1] for s in splits]
+
+    # Deduplicación estricta por ticker, fecha y titular
     antes_dedup = len(df)
-    df = df.drop_duplicates(subset=["ticker", "date", "text"]).reset_index(drop=True)
+    df = df.drop_duplicates(subset=["ticker", "date", "title"]).reset_index(drop=True)
     eliminados = antes_dedup - len(df)
     print(f"Duplicados eliminados: {eliminados:,} ({eliminados / antes_dedup * 100:.2f}%)")
     print(f"Total registros limpios consolidados: {len(df):,}")
+
+    con_articulo = (df["article"].str.len() > 0).sum()
+    print(f"• Registros con cuerpo de artículo ('article'): {con_articulo:,} ({con_articulo / len(df) * 100:.2f}%)")
+    print(f"• Registros que son titulares / alertas breves: {len(df) - con_articulo:,}")
 
     columnas_finales = [
         "ticker",
@@ -153,10 +178,12 @@ def extract_and_transform() -> pd.DataFrame:
         "cik",
         "date",
         "datetime",
-        "source_dataset",
-        "publisher",
+        "title",
+        "article",
         "text",
-        "url"
+        "publisher",
+        "url",
+        "source_dataset"
     ]
     df = df[columnas_finales]
 
