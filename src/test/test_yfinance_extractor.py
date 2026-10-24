@@ -2,7 +2,7 @@
 Tests unitarios para la lógica de formateo y extracción de cotizaciones de yfinance.
 """
 import pandas as pd
-from shared.yfinance_extractor import aplanar_columnas_multiindex
+from mercado.yfinance_extractor import aplanar_columnas_multiindex
 
 
 def test_aplanar_columnas_multiindex_basico():
