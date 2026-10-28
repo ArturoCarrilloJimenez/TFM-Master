@@ -39,10 +39,10 @@ Los datos se encuentran filtrados y normalizados de forma canónica según los i
 | **`JPM`** | JPMorgan Chase & Co. | `0000019617` | 18.953 noticias | 609 filings |
 | **`BAC`** | Bank of America Corp. | `0000070858` | 11.509 noticias | 678 filings |
 | **`WFC`** | Wells Fargo & Company | `0000072971` | 16.075 noticias | 487 filings |
-| **`C`** | Citigroup Inc. | `0000831001` | 25.759 noticias | 468 filings |
+| **`C`** | Citigroup Inc. | `0000831001` | 8.647 noticias | 468 filings |
 | **`GS`** | Goldman Sachs Group Inc. | `0000886982` | 18.321 noticias | 390 filings |
 | **`MS`** | Morgan Stanley | `0000895421` | 16.341 noticias | 276 filings |
-| **TOTAL** | — | — | **106.958 noticias** | **2.908 filings** |
+| **TOTAL** | — | — | **89.846 noticias** | **2.908 filings** |
 
 ---
 

@@ -41,7 +41,7 @@ Additional paragraph with detailed quotes from the CEO."""
 
 
 def test_extract_and_transform_pipeline():
-    """Valida el filtrado, deduplicación y mapeo canónico de TIKETS con DuckDB mockeado."""
+    """Valida el filtrado, deduplicación, filtro de falsos positivos de C y mapeo canónico de TIKETS."""
     mock_raw_data = pd.DataFrame([
         {
             "ticker": "JPM",
@@ -77,6 +77,24 @@ def test_extract_and_transform_pipeline():
             "publisher": "SentARL",
             "text": "Wells Fargo Declares Regular Dividend",
             "url": "http://wfc.com/news/3"
+        },
+        # Falso positivo de Citigroup ('C' sin mención en texto ni título)
+        {
+            "ticker": "C",
+            "date": "2022-01-05 12:00:00",
+            "source_dataset": "yahoo_finance_felixdrinkall",
+            "publisher": "Yahoo Finance",
+            "text": "Antarctica turning green as climate change takes hold\nSome climate study text.",
+            "url": "http://yahoo.com/c/fake"
+        },
+        # Noticia válida de Citigroup ('C' con 'Citi' en el texto)
+        {
+            "ticker": "C",
+            "date": "2022-01-05 15:00:00",
+            "source_dataset": "yahoo_finance_felixdrinkall",
+            "publisher": "Yahoo Finance",
+            "text": "Citigroup Announces Executive Reshuffle\nCiti names new head of banking.",
+            "url": "http://yahoo.com/c/real"
         }
     ])
 
@@ -86,9 +104,9 @@ def test_extract_and_transform_pipeline():
     with patch("duckdb.connect", return_value=mock_con):
         df_result = extract_and_transform()
 
-    # Se descartan la fila duplicada y la fila con fecha inválida (quedan 2 registros)
-    assert len(df_result) == 2
-    assert list(df_result["ticker"]) == ["JPM", "WFC"]
+    # Se descartan la fila duplicada, la fecha inválida y el falso positivo de C (quedan 3 registros: JPM, WFC, C)
+    assert len(df_result) == 3
+    assert set(df_result["ticker"]) == {"JPM", "WFC", "C"}
 
     # Verificar enriquecimiento con TIKETS
     jpm_row = df_result[df_result["ticker"] == "JPM"].iloc[0]
@@ -97,17 +115,24 @@ def test_extract_and_transform_pipeline():
     assert jpm_row["title"] == "JPM Headline"
     assert jpm_row["article"] == "Full article content for JPMorgan Chase."
 
+    c_row = df_result[df_result["ticker"] == "C"].iloc[0]
+    assert c_row["company_name"] == "Citigroup Inc."
+    assert c_row["title"] == "Citigroup Announces Executive Reshuffle"
+
     wfc_row = df_result[df_result["ticker"] == "WFC"].iloc[0]
     assert wfc_row["company_name"] == "Wells Fargo & Company/MN"
     assert wfc_row["title"] == "Wells Fargo Declares Regular Dividend"
     assert wfc_row["article"] == ""
 
-    # Verificar columnas finales esperadas
+    # Verificar columnas finales esperadas incluyendo ticker_count e is_multisubject
     columnas_esperadas = [
         "ticker", "company_name", "cik", "date", "datetime",
-        "title", "article", "text", "publisher", "url", "source_dataset"
+        "title", "article", "text", "publisher", "url", "source_dataset",
+        "ticker_count", "is_multisubject"
     ]
     assert list(df_result.columns) == columnas_esperadas
+    assert (df_result["ticker_count"] == 1).all()
+    assert (~df_result["is_multisubject"]).all()
 
 
 def test_save_and_upload():
@@ -124,7 +149,9 @@ def test_save_and_upload():
             "text": "Goldman Sachs Reports Q4 Earnings\nDetailed earnings breakdown for Goldman Sachs.",
             "publisher": "Bloomberg",
             "url": "http://bloomberg.com/gs",
-            "source_dataset": "yahoo_finance_felixdrinkall"
+            "source_dataset": "yahoo_finance_felixdrinkall",
+            "ticker_count": 1,
+            "is_multisubject": False
         }
     ])
 
