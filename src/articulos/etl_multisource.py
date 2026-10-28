@@ -1,6 +1,7 @@
 """
 ETL Job: Procesamiento y carga del dataset multisource para los 6 bancos (2010-2023).
 Extrae de los parquets locales, separa explícitamente en 'title' (titular) y 'article' (cuerpo),
+filtra falsos positivos léxicos en Citigroup ('C'), calcula el conteo de tickers asociados ('ticker_count'),
 normaliza, enriquece, deduplica y carga a Cloudflare R2 bajo 'raw/huggingface/multisource_bancos_2010_2023.parquet'.
 """
 
@@ -12,8 +13,11 @@ import boto3
 
 # Asegurar path para módulos del proyecto
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+SRC_DIR = PROJECT_ROOT / "src"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from config.settings import settings
 from shared.tikets import TIKETS
@@ -158,11 +162,28 @@ def extract_and_transform() -> pd.DataFrame:
     df = df.drop_duplicates(subset=["ticker", "date", "title"]).reset_index(drop=True)
     eliminados = antes_dedup - len(df)
     print(f"Duplicados eliminados: {eliminados:,} ({eliminados / antes_dedup * 100:.2f}%)")
+
+    # Filtrar falsos positivos de Citigroup ('C')
+    # Descartar registros de 'C' que no contengan 'citi' en el titular ni en el cuerpo del texto
+    antes_citi = len(df)
+    es_basura_citi = (df["ticker"] == "C") & \
+                     (~df["title"].str.contains("citi", case=False, na=False)) & \
+                     (~df["text"].str.contains("citi", case=False, na=False))
+    df = df[~es_basura_citi].reset_index(drop=True)
+    eliminados_citi = antes_citi - len(df)
+    print(f"Falsos positivos de Citigroup ('C') eliminados: {eliminados_citi:,}")
+
+    # Conteo de tickers por noticia única (title + datetime) y flag multisujeto
+    df["ticker_count"] = df.groupby(["title", "datetime"])["ticker"].transform("nunique")
+    df["is_multisubject"] = df["ticker_count"] > 1
+
     print(f"Total registros limpios consolidados: {len(df):,}")
 
     con_articulo = (df["article"].str.len() > 0).sum()
     print(f"• Registros con cuerpo de artículo ('article'): {con_articulo:,} ({con_articulo / len(df) * 100:.2f}%)")
     print(f"• Registros que son titulares / alertas breves: {len(df) - con_articulo:,}")
+    print(f"• Registros de señal pura (1 ticker exclusivo): {(df['ticker_count'] == 1).sum():,}")
+    print(f"• Registros multisujeto (compartidos por 2+ tickers): {df['is_multisubject'].sum():,}")
 
     columnas_finales = [
         "ticker",
@@ -175,7 +196,9 @@ def extract_and_transform() -> pd.DataFrame:
         "text",
         "publisher",
         "url",
-        "source_dataset"
+        "source_dataset",
+        "ticker_count",
+        "is_multisubject"
     ]
     df = df[columnas_finales]
 
