@@ -1,12 +1,12 @@
-"""
-Módulo para la normalización y filtrado en streaming del dataset FNSPID.
-"""
-import sys
+"""Módulo para la normalización y filtrado en streaming del dataset FNSPID."""
+
 import csv
 import io
-from typing import Set, List, Dict, Any, Optional
+import sys
+from typing import Any
+from shared.tikets import TIKETS
 
-BANCOS_TARGET_DEFAULT: Set[str] = {'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS'}
+BANCOS_TARGET_DEFAULT: set[str] = set(TIKETS.keys())
 
 
 def ajustar_limite_csv() -> None:
@@ -20,7 +20,7 @@ def ajustar_limite_csv() -> None:
             max_int = int(max_int / 10)
 
 
-def normalizar_ticker(ticker_raw: Optional[Any]) -> str:
+def normalizar_ticker(ticker_raw: Any | None) -> str:
     """Limpia y pasa a mayúsculas el símbolo bursátil."""
     if not ticker_raw:
         return ""
@@ -29,14 +29,13 @@ def normalizar_ticker(ticker_raw: Optional[Any]) -> str:
 
 def procesar_stream_noticias(
     stream_io: io.TextIOBase,
-    bancos_permitidos: Set[str]
-) -> List[Dict[str, str]]:
-    """
-    Lee un stream CSV y captura los registros que coinciden con los bancos objetivo.
+    bancos_permitidos: set[str],
+) -> list[dict[str, str]]:
+    """Lee un stream CSV y captura los registros que coinciden con los bancos objetivo.
     Conserva todos los campos y valores textuales originales sin descarte por fecha.
     """
     reader = csv.DictReader(stream_io)
-    registros: List[Dict[str, str]] = []
+    registros: list[dict[str, str]] = []
 
     for row in reader:
         ticker = normalizar_ticker(row.get("Stock_symbol"))

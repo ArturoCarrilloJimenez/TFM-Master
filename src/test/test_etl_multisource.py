@@ -2,7 +2,7 @@
 Tests unitarios para el pipeline ETL de noticias financieras multisource (src/articulos/etl_multisource.py).
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 import pytest
 
@@ -136,7 +136,7 @@ def test_extract_and_transform_pipeline():
 
 
 def test_save_and_upload():
-    """Valida la generación de parquet local y la llamada de subida a Cloudflare R2."""
+    """Valida la generación de parquet local y la llamada de subida a Cloudflare R2 vía Storage Repository."""
     df_sample = pd.DataFrame([
         {
             "ticker": "GS",
@@ -155,24 +155,24 @@ def test_save_and_upload():
         }
     ])
 
-    mock_s3 = MagicMock()
-    mock_s3.head_object.return_value = {
-        "ContentLength": 1024 * 1024 * 5,
-        "LastModified": "2026-10-24 21:00:00"
-    }
-
     mock_stat = MagicMock()
     mock_stat.st_size = 1024 * 1024 * 5
 
+    mock_storage = MagicMock()
+    mock_storage.save = AsyncMock()
+
     with patch.object(df_sample, "to_parquet") as mock_to_parquet, \
          patch("pathlib.Path.stat", return_value=mock_stat), \
-         patch("boto3.client", return_value=mock_s3):
+         patch("pathlib.Path.read_bytes", return_value=b"fake_parquet_bytes"), \
+         patch("articulos.etl_multisource.get_storage_repository", return_value=mock_storage):
         
         save_and_upload(df_sample)
 
         mock_to_parquet.assert_called_once()
-        mock_s3.upload_file.assert_called_once()
-        mock_s3.head_object.assert_called_once()
+        mock_storage.save.assert_called_once_with(
+            key="raw/huggingface/multisource_bancos_2010_2023.parquet",
+            body=b"fake_parquet_bytes"
+        )
 
 
 def test_main_block():

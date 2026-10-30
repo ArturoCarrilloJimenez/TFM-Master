@@ -5,17 +5,19 @@ Captura por Ticker exacto, Ticker sucio, Titular y URL, clasificando el motivo d
 Conserva copia en LOCAL y sube a Cloudflare R2 en raw/huggingface/fnspid_bancos_v2.parquet.
 """
 
-import os
+import asyncio
 import sys
 import csv
 import io
 import re
 import urllib.request
 from pathlib import Path
-import boto3
-from botocore.client import Config
 import pandas as pd
-from dotenv import load_dotenv
+from dependencies.dependencies import get_storage_repository
+from shared.logging import Logger
+from shared.tikets import TIKETS
+
+logger = Logger("FNSIPDExtractorV2")
 
 # 1. Ampliar límite de celda CSV para admitir artículos largos
 max_int = sys.maxsize
@@ -26,39 +28,17 @@ while True:
     except OverflowError:
         max_int = int(max_int / 10)
 
-# 2. Carga de credenciales desde .env
-env_path = Path(__file__).resolve().parent / ".env"
-for parent in Path(__file__).resolve().parents:
-    if (parent / ".env").exists():
-        env_path = parent / ".env"
-        break
-load_dotenv(dotenv_path=env_path)
-
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "").rstrip("/")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "").strip()
-AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", "auto")
-S3_PREFIX_RAW = os.getenv("S3_PREFIX_RAW", "raw").strip("/")
-
-# Validación de credenciales diferida al bloque de ejecución principal
-
-if S3_BUCKET_NAME in S3_ENDPOINT_URL:
-    S3_ENDPOINT_URL = S3_ENDPOINT_URL.replace(f"/{S3_BUCKET_NAME}", "")
-
-if "r2.cloudflarestorage.com" in S3_ENDPOINT_URL and ".eu.r2." not in S3_ENDPOINT_URL:
-    S3_ENDPOINT_URL = S3_ENDPOINT_URL.replace(".r2.cloudflarestorage.com", ".eu.r2.cloudflarestorage.com")
-
-# Ambas fuentes de datos de FNSPID en Hugging Face
+# 2. Configuración y rutas de destino
 URLS_HF_CSV = {
     "nasdaq_external": "https://huggingface.co/datasets/Zihan1004/FNSPID/resolve/main/Stock_news/nasdaq_exteral_data.csv",
-    "all_external": "https://huggingface.co/datasets/Zihan1004/FNSPID/resolve/main/Stock_news/All_external.csv"
+    "all_external": "https://huggingface.co/datasets/Zihan1004/FNSPID/resolve/main/Stock_news/All_external.csv",
 }
 
 LOCAL_PARQUET = "fnspid_bancos_v2.parquet"
-KEY_DESTINO = f"{S3_PREFIX_RAW}/huggingface/fnspid_bancos_v2.parquet"
+KEY_DESTINO = "raw/huggingface/fnspid_bancos_v2.parquet"
 
-BANCOS = {'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS'}
+# Universo canónico de los 6 bancos derivado de shared.tikets
+BANCOS: set[str] = set(TIKETS.keys())
 VALORES_VACIOS = {"", "NAN", "NONE", "NULL"}
 
 # 3. Expresiones regulares compiladas para máxima velocidad en el bucle
@@ -107,7 +87,7 @@ def _obtener_detalle_match(banco: str, title: str, url: str) -> str:
     return ""
 
 
-def _buscar_en_texto(ticker_clean: str, title: str, url: str) -> list:
+def _buscar_en_texto(ticker_clean: str, title: str, url: str) -> list[tuple[str, str, str]]:
     """Evalúa menciones en titular o URL cuando no hay match directo de ticker."""
     hallazgos = []
     metodo = "CROSS_MENTION_OTHER_TICKER" if ticker_clean else "RESCUED_NO_TICKER"
@@ -121,7 +101,7 @@ def _buscar_en_texto(ticker_clean: str, title: str, url: str) -> list:
     return hallazgos
 
 
-def clasificar_fila(raw_ticker: str, title: str, url: str) -> list:
+def clasificar_fila(raw_ticker: str, title: str, url: str) -> list[tuple[str, str, str]]:
     """
     Evalúa si una fila pertenece a alguno de los 6 bancos.
     Devuelve una lista de tuplas: [(ticker_asignado, metodo_captura, detalle_match), ...]
@@ -146,7 +126,7 @@ def clasificar_fila(raw_ticker: str, title: str, url: str) -> list:
     return _buscar_en_texto(ticker_clean, str(title or ""), str(url or ""))
 
 
-def _construir_filas_capturadas(row: dict, matches: list, fuente_nombre: str) -> list:
+def _construir_filas_capturadas(row: dict[str, str], matches: list[tuple[str, str, str]], fuente_nombre: str) -> list[dict[str, str]]:
     """Genera los diccionarios enriquecidos para cada match de una fila."""
     raw_ticker = str(row.get("Stock_symbol") or "").strip()
     nuevas = []
@@ -161,12 +141,10 @@ def _construir_filas_capturadas(row: dict, matches: list, fuente_nombre: str) ->
     return nuevas
 
 
-def procesar_fuente_streaming(fuente_nombre: str, url_csv: str, registros: list) -> None:
+def procesar_fuente_streaming(fuente_nombre: str, url_csv: str, registros: list[dict[str, str]]) -> None:
     """Descarga en streaming un CSV de Hugging Face y acumula las filas filtradas."""
-    separador = "=" * 80
-    print(f"\n{separador}")
-    print(f"Iniciando lectura en streaming de: {fuente_nombre} ({url_csv})")
-    print(separador)
+    logger.info(f"Iniciando lectura en streaming de: {fuente_nombre} ({url_csv})")
+    
 
     req = urllib.request.Request(url_csv, headers={'User-Agent': 'Mozilla/5.0'})
     total_leidos = 0
@@ -190,53 +168,38 @@ def procesar_fuente_streaming(fuente_nombre: str, url_csv: str, registros: list)
                     capturados_fuente += len(nuevas_filas)
 
                 if total_leidos % 500000 == 0:
-                    print(
+                    logger.info(
                         f"[{fuente_nombre}] Filas leídas: {total_leidos:,} | "
                         f"Capturadas aquí: {capturados_fuente:,} | "
                         f"Total acumulado: {len(registros):,}"
                     )
     except Exception as e:
-        print(f"\n[AVISO] Interrupción o fin de stream en {fuente_nombre} tras {total_leidos:,} filas: {e}")
+        logger.warning(f"Interrupción o fin de stream en {fuente_nombre} tras {total_leidos:,} filas: {e}")
 
 if __name__ == '__main__':
-    if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_ENDPOINT_URL, S3_BUCKET_NAME]):
-        raise ValueError("Faltan variables críticas de R2 en el archivo .env")
-
     # 4. Ejecución del pipeline de lectura
     registros_totales = []
     for nombre_fuente, url_archivo in URLS_HF_CSV.items():
         procesar_fuente_streaming(nombre_fuente, url_archivo, registros_totales)
 
-    print(f"\nLectura global finalizada. Total registros capturados: {len(registros_totales):,}")
+    logger.info(f"Lectura global finalizada. Total registros capturados: {len(registros_totales):,}")
 
     # 5. Generación de Parquet LOCAL (se conserva en disco para análisis)
-    print(f"\nGenerando archivo Parquet local: {LOCAL_PARQUET}...")
+    logger.info(f"Generando archivo Parquet local: {LOCAL_PARQUET}...")
     df = pd.DataFrame(registros_totales).astype(str)
-    df.to_parquet(LOCAL_PARQUET, index=False, compression='snappy')
-    size_mb = os.path.getsize(LOCAL_PARQUET) / (1024 * 1024)
-    print(f"Archivo local guardado con éxito: {LOCAL_PARQUET} ({size_mb:.2f} MB)")
+    df.to_parquet(LOCAL_PARQUET, index=False, compression='zstd')
+    size_mb = Path(LOCAL_PARQUET).stat().st_size / (1024 * 1024)
+    logger.info(f"Archivo local guardado con éxito: {LOCAL_PARQUET} ({size_mb:.2f} MB)")
 
     # Resumen rápido por consola antes de subir
-    print("\n--- RESUMEN POR MÉTODO DE CAPTURA Y BANCO ---")
-    print(pd.crosstab(df["Stock_symbol"], df["Metodo_Captura"], margins=True))
+    
+    logger.info("Resumen por método de captura y banco:\n" + str(pd.crosstab(df["Stock_symbol"], df["Metodo_Captura"], margins=True)))
 
-    # 6. Subida a Cloudflare R2
-    s3_client = boto3.client(
-        "s3",
-        endpoint_url=S3_ENDPOINT_URL,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_DEFAULT_REGION,
-        config=Config(
-            s3={"addressing_style": "path"},
-            signature_version="s3v4"
-        )
-    )
-
-    print(f"\nSubiendo a Cloudflare R2: s3://{S3_BUCKET_NAME}/{KEY_DESTINO}...")
-    # Cloudflare R2 es S3-compatible y no utiliza ExpectedBucketOwner de AWS IAM
-    s3_client.upload_file(LOCAL_PARQUET, S3_BUCKET_NAME, KEY_DESTINO)  # NOSONAR
-    print("¡SUBIDA COMPLETADA CON ÉXITO!")
-    print(f"1. Copia en la nube: s3://{S3_BUCKET_NAME}/{KEY_DESTINO}")
-    print(f"2. Copia en tu disco local: {os.path.abspath(LOCAL_PARQUET)}")
+    # 6. Subida a Cloudflare R2 vía Storage Repository
+    logger.info(f"Subiendo a Cloudflare R2 vía Storage Repository: {KEY_DESTINO}...")
+    storage = get_storage_repository()
+    asyncio.run(storage.save(key=KEY_DESTINO, body=Path(LOCAL_PARQUET).read_bytes()))
+    logger.info("Subida completada con éxito.")
+    
+    logger.info(f"Copia persistida en local: {Path(LOCAL_PARQUET).resolve()}")
 
