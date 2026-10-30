@@ -5,11 +5,11 @@ filtra falsos positivos léxicos en Citigroup ('C'), calcula el conteo de ticker
 normaliza, enriquece, deduplica y carga a Cloudflare R2 bajo 'raw/huggingface/multisource_bancos_2010_2023.parquet'.
 """
 
+import asyncio
 import sys
 from pathlib import Path
 import duckdb
 import pandas as pd
-import boto3
 
 # Asegurar path para módulos del proyecto
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -19,7 +19,10 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from config.settings import settings
+from dependencies.dependencies import get_storage_repository
+from shared.logging import Logger
+
+logger = Logger("ETLMultisource")
 from shared.tikets import TIKETS
 
 DATA_DIR = PROJECT_ROOT / "src" / "data" / "financial_news_multisource" / "data"
@@ -44,9 +47,9 @@ def extraer_title_y_article(raw_text: str) -> tuple[str, str]:
 
 def extract_and_transform() -> pd.DataFrame:
     """Extrae datos con DuckDB aplicando filtros de fecha y tickers."""
-    print("=" * 70)
-    print("1. INICIANDO EXTRACCIÓN Y TRANSFORMACIÓN CON DUCKDB")
-    print("=" * 70)
+    
+    logger.info("1. Iniciando extracción y transformación con DuckDB...")
+    
 
     con = duckdb.connect()
     tickers = list(TIKETS.keys())
@@ -138,9 +141,12 @@ def extract_and_transform() -> pd.DataFrame:
     ORDER BY date ASC;
     """
 
-    print("Ejecutando consulta de pushdown predicates sobre Parquets en disco...")
-    df = con.execute(query).df()
-    print(f"Total filas extraídas brutas: {len(df):,}")
+    logger.info("Ejecutando consulta de pushdown predicates sobre Parquets en disco...")
+    try:
+        df = con.execute(query).df()
+    finally:
+        con.close()
+    logger.info(f"Total filas extraídas brutas: {len(df):,}")
 
     # Enriquecer con metadatos de TIKETS
     df["company_name"] = df["ticker"].map(lambda t: TIKETS.get(t, ("", ""))[1])
@@ -152,7 +158,7 @@ def extract_and_transform() -> pd.DataFrame:
     df["date"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
     # Separación explícita en 'title' (titular) y 'article' (cuerpo)
-    print("Separando textos en 'title' (titular) y 'article' (cuerpo extenso)...")
+    logger.info("Separando textos en 'title' (titular) y 'article' (cuerpo extenso)...")
     splits = df["text"].apply(extraer_title_y_article)
     df["title"] = [s[0] for s in splits]
     df["article"] = [s[1] for s in splits]
@@ -161,7 +167,7 @@ def extract_and_transform() -> pd.DataFrame:
     antes_dedup = len(df)
     df = df.drop_duplicates(subset=["ticker", "date", "title"]).reset_index(drop=True)
     eliminados = antes_dedup - len(df)
-    print(f"Duplicados eliminados: {eliminados:,} ({eliminados / antes_dedup * 100:.2f}%)")
+    logger.info(f"Duplicados eliminados: {eliminados:,} ({eliminados / antes_dedup * 100:.2f}%)")
 
     # Filtrar falsos positivos de Citigroup ('C')
     # Descartar registros de 'C' que no contengan 'citi' en el titular ni en el cuerpo del texto
@@ -171,19 +177,19 @@ def extract_and_transform() -> pd.DataFrame:
                      (~df["text"].str.contains("citi", case=False, na=False))
     df = df[~es_basura_citi].reset_index(drop=True)
     eliminados_citi = antes_citi - len(df)
-    print(f"Falsos positivos de Citigroup ('C') eliminados: {eliminados_citi:,}")
+    logger.info(f"Falsos positivos de Citigroup ('C') eliminados: {eliminados_citi:,}")
 
     # Conteo de tickers por noticia única (title + datetime) y flag multisujeto
     df["ticker_count"] = df.groupby(["title", "datetime"])["ticker"].transform("nunique")
     df["is_multisubject"] = df["ticker_count"] > 1
 
-    print(f"Total registros limpios consolidados: {len(df):,}")
+    logger.info(f"Total registros limpios consolidados: {len(df):,}")
 
     con_articulo = (df["article"].str.len() > 0).sum()
-    print(f"• Registros con cuerpo de artículo ('article'): {con_articulo:,} ({con_articulo / len(df) * 100:.2f}%)")
-    print(f"• Registros que son titulares / alertas breves: {len(df) - con_articulo:,}")
-    print(f"• Registros de señal pura (1 ticker exclusivo): {(df['ticker_count'] == 1).sum():,}")
-    print(f"• Registros multisujeto (compartidos por 2+ tickers): {df['is_multisubject'].sum():,}")
+    logger.info(f"Registros con cuerpo de artículo ('article'): {con_articulo:,} ({con_articulo / len(df) * 100:.2f}%)")
+    logger.info(f"Registros que son titulares / alertas breves: {len(df) - con_articulo:,}")
+    logger.info(f"Registros de señal pura (1 ticker exclusivo): {(df['ticker_count'] == 1).sum():,}")
+    logger.info(f"Registros multisujeto (compartidos por 2+ tickers): {df['is_multisubject'].sum():,}")
 
     columnas_finales = [
         "ticker",
@@ -202,54 +208,38 @@ def extract_and_transform() -> pd.DataFrame:
     ]
     df = df[columnas_finales]
 
-    print("\n--- DISTRIBUCIÓN POR BANCO ---")
-    print(df["ticker"].value_counts().to_string())
+    
+    logger.info("Distribución por banco:\n" + df["ticker"].value_counts().to_string())
 
     df["year"] = df["datetime"].dt.year
-    print("\n--- DISTRIBUCIÓN ANUAL (2010 - 2023) ---")
-    print(pd.crosstab(df["year"], df["ticker"]).to_string())
+    
+    logger.info("Distribución anual (2010 - 2023):\n" + pd.crosstab(df["year"], df["ticker"]).to_string())
     df = df.drop(columns=["year"])
 
     return df
 
 
 def save_and_upload(df: pd.DataFrame) -> None:
-    """Guarda en local como Parquet y sube a Cloudflare R2."""
-    print("\n" + "=" * 70)
-    print("2. GUARDANDO ARCHIVO LOCAL Y SUBIENDO A CLOUDFLARE R2")
-    print("=" * 70)
+    """Guarda en local como Parquet y sube a Cloudflare R2 usando el Storage Repository."""
+    logger.info("2. Guardando archivo local y subiendo a Cloudflare R2...")
 
     # 1. Guardar local
     LOCAL_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Guardando Parquet comprimido en: {LOCAL_OUTPUT}")
+    logger.info(f"Guardando Parquet comprimido en: {LOCAL_OUTPUT}")
     df.to_parquet(LOCAL_OUTPUT, compression="zstd", index=False)
     file_size_mb = LOCAL_OUTPUT.stat().st_size / (1024 * 1024)
-    print(f"-> Archivo local generado exitosamente: {file_size_mb:.2f} MB")
+    logger.info(f"Archivo local generado exitosamente: {file_size_mb:.2f} MB")
 
-    # 2. Conectar a S3/R2
-    print("\nConectando a Cloudflare R2:")
-    print(f"  Bucket: {settings.s3_bucket_name}")
-    print(f"  Destino: {R2_OBJECT_KEY}")
+    # 2. Conectar a S3/R2 mediante el repositorio centralizado de infraestructura
+    logger.info(f"Conectando a R2 mediante repositorio - Destino: {R2_OBJECT_KEY}")
+    storage = get_storage_repository()
 
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=settings.s3_endpoint_url,
-        aws_access_key_id=settings.aws_access_key_id,
-        aws_secret_access_key=settings.aws_secret_access_key,
-        region_name=settings.s3_region,
-    )
+    logger.info("Subiendo archivo Parquet a R2...")
+    parquet_bytes = LOCAL_OUTPUT.read_bytes()
+    asyncio.run(storage.save(key=R2_OBJECT_KEY, body=parquet_bytes))
+    logger.info("Subida a R2 completada con éxito.")
 
-    print("Subiendo a R2...")
-    s3.upload_file(str(LOCAL_OUTPUT), settings.s3_bucket_name, R2_OBJECT_KEY) # NOSONAR
-    print("-> Subida a R2 completada con éxito.")
-
-    # 3. Verificar en R2
-    head = s3.head_object(Bucket=settings.s3_bucket_name, Key=R2_OBJECT_KEY) # NOSONAR
-    r2_size_mb = head["ContentLength"] / (1024 * 1024)
-    print(f"-> Verificación R2: Tamaño={r2_size_mb:.2f} MB | LastModified={head['LastModified']}")
-    print("=" * 70)
-    print("ETL COMPLETADA SATISFACTORIAMENTE")
-    print("=" * 70)
+    logger.info("ETL completada satisfactoriamente.")
 
 
 if __name__ == "__main__":

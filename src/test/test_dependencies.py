@@ -1,4 +1,3 @@
-import pytest
 from infrastructure.storage.base import BaseStorageRepository
 from infrastructure.storage.s3.adapter import S3StorageRepository
 from infrastructure.compaction.base import BaseDataCompactor

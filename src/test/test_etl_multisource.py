@@ -2,9 +2,8 @@
 Tests unitarios para el pipeline ETL de noticias financieras multisource (src/articulos/etl_multisource.py).
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
-import pytest
 
 from articulos.etl_multisource import (
     extraer_title_y_article,
@@ -33,7 +32,7 @@ def test_extraer_title_y_article_multilinea():
     texto = """Bank of America Expands Lending Program
 The Charlotte-based bank announced a multi-billion initiative today.
 Additional paragraph with detailed quotes from the CEO."""
-    
+
     title, article = extraer_title_y_article(texto)
     assert title == "Bank of America Expands Lending Program"
     assert "The Charlotte-based bank announced a multi-billion initiative today." in article
@@ -136,7 +135,7 @@ def test_extract_and_transform_pipeline():
 
 
 def test_save_and_upload():
-    """Valida la generación de parquet local y la llamada de subida a Cloudflare R2."""
+    """Valida la generación de parquet local y la llamada de subida a Cloudflare R2 vía Storage Repository."""
     df_sample = pd.DataFrame([
         {
             "ticker": "GS",
@@ -155,31 +154,31 @@ def test_save_and_upload():
         }
     ])
 
-    mock_s3 = MagicMock()
-    mock_s3.head_object.return_value = {
-        "ContentLength": 1024 * 1024 * 5,
-        "LastModified": "2026-10-24 21:00:00"
-    }
-
     mock_stat = MagicMock()
     mock_stat.st_size = 1024 * 1024 * 5
 
+    mock_storage = MagicMock()
+    mock_storage.save = AsyncMock()
+
     with patch.object(df_sample, "to_parquet") as mock_to_parquet, \
          patch("pathlib.Path.stat", return_value=mock_stat), \
-         patch("boto3.client", return_value=mock_s3):
-        
+         patch("pathlib.Path.read_bytes", return_value=b"fake_parquet_bytes"), \
+         patch("articulos.etl_multisource.get_storage_repository", return_value=mock_storage):
+
         save_and_upload(df_sample)
 
         mock_to_parquet.assert_called_once()
-        mock_s3.upload_file.assert_called_once()
-        mock_s3.head_object.assert_called_once()
+        mock_storage.save.assert_called_once_with(
+            key="raw/huggingface/multisource_bancos_2010_2023.parquet",
+            body=b"fake_parquet_bytes"
+        )
 
 
 def test_main_block():
     """Valida la ejecución del flujo completo de inicio a fin."""
     with patch("articulos.etl_multisource.extract_and_transform") as mock_extract, \
          patch("articulos.etl_multisource.save_and_upload") as mock_save:
-        
+
         mock_df = pd.DataFrame({"ticker": ["JPM"]})
         mock_extract.return_value = mock_df
 
