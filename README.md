@@ -32,7 +32,7 @@ El pipeline opera bajo una arquitectura **Medallion Data Lake** sobre almacenami
 
 ## 🏦 3. Universo Bancario Analizado (Big 6 US Banks)
 
-Los datos se encuentran filtrados y normalizados de forma canónica según los identificadores oficiales de la SEC definidos en [`src/shared/tikets.py`](file:///C:/proyectos/TFM-Master/src/shared/tikets.py):
+Los datos se encuentran filtrados y normalizados de forma canónica según los identificadores oficiales de la SEC definidos en [`src/shared/tikets.py`](src/shared/tikets.py):
 
 | Ticker | Entidad Financiera | CIK SEC | Cobertura Noticias (2010-2023) | Eventos 8-K (2010-2023) |
 | :---: | :--- | :---: | :---: | :---: |
@@ -59,28 +59,46 @@ TFM-Master/
 │   ├── articulos/                # DOMINIO NOTICIAS: ETL y consolidación de noticias financieras
 │   │   └── etl_multisource.py    # Pipeline ETL DuckDB -> Limpieza -> Parquet -> Cloudflare R2
 │   ├── config/                   # CONFIGURACIÓN: BaseSettings tipada con Pydantic V2
+│   │   ├── README.md             # Guía de configuración y ventajas vs os.getenv
 │   │   └── settings.py           # Variables de entorno (.env) y configuración de R2/AWS
 │   ├── dependencies/             # INYECCIÓN DE DEPENDENCIAS: Singletons de storage y compactador
 │   │   └── dependencies.py
 │   ├── infrastructure/           # INFRAESTRUCTURA: Adaptadores de entrada/salida desacoplados
+│   │   ├── README.md             # Guía de arquitectura hexagonal y uso de adaptadores
 │   │   ├── compaction/           # Compactador Parquet PyArrow en RAM con compresión ZSTD
+│   │   ├── scraper/              # Cliente HTTP para WebScrapingDistributed API
 │   │   └── storage/s3/           # Adaptador de almacenamiento S3/Cloudflare R2 asíncrono
 │   ├── mercado/                  # DOMINIO MERCADO: Ingestión y aplanado de cotizaciones
 │   │   └── yfinance_extractor.py # Extractor de Yahoo Finance y generador de parquets
 │   ├── notebooks/                # RESEARCH & EDA: Notebooks exploratorios con lectura directa de R2
 │   │   ├── ExplorarDatasetsSec.ipynb
+│   │   ├── huggingface_2010_2023_EDA.ipynb
+│   │   ├── huggingface_2010_2023_EDA_v2.ipynb
 │   │   ├── multisource_financial_news_EDA_2010_2023.ipynb
 │   │   └── Yfinance_2010_2023_EDA.ipynb
 │   ├── sec/                      # DOMINIO REGULATORIO: Motor de descubrimiento SEC EDGAR
 │   │   ├── adaptador.py          # Adaptador de búsqueda dinámica y paginación profunda
-│   │   └── etl_historico.py      # Job de descubrimiento y reporte de filings 2010-2023
-│   ├── shared/                   # TRANSVERSAL: Diccionario TIKETS y logger estructurado
+│   │   ├── etl_historico.py      # Job de descubrimiento y reporte de filings 2010-2023
+│   │   └── etl_proces_raw_data_8k.py # Pipeline ETL para eventos SEC 8-K
+│   ├── shared/                   # TRANSVERSAL: Diccionario TIKETS/TICKETS y logger estructurado
+│   │   ├── README.md             # Guía de observabilidad y catálogo canónico bancario
 │   │   ├── logging.py
+│   │   ├── tickets.py            # Alias semántico canónico
 │   │   └── tikets.py
-│   └── test/                     # TESTS: Suite completa de pruebas con Moto y pytest (91% cov)
-├── pyproject.toml                # Gestión de dependencias con Astral uv
+│   └── test/                     # TESTS: Suite completa de pruebas con Moto y pytest (92% cov)
+├── pyproject.toml                # Gestión de dependencias y herramientas (uv + ruff)
 └── README.md                     # Documentación principal del repositorio
 ```
+
+---
+
+## 📚 Documentación Técnica Interna
+
+Para facilitar el trabajo en equipo y el desarrollo modular, cada paquete de soporte cuenta con su propia guía técnica detallada:
+
+* ⚙️ **[Módulo de Configuración (`src/config/README.md`)](src/config/README.md)**: Justificación arquitectónica de `settings` (Pydantic Settings) frente a `os.getenv`, catálogo de variables de entorno tipadas y guía para incorporar nuevas configuraciones.
+* 🏗️ **[Capa de Infraestructura (`src/infrastructure/README.md`)](src/infrastructure/README.md)**: Arquitectura hexagonal (Ports & Adapters), inyección de dependencias mediante `dependencies.py`, ejemplos de lectura/escritura en Cloudflare R2 sin instanciar `boto3.client` a mano, compactación columnar Parquet ZSTD y cliente de scraping distribuido.
+* 🧩 **[Recursos Transversales (`src/shared/README.md`)](src/shared/README.md)**: Sistema de observabilidad y logging estructurado (`Logger`), fuente única de verdad para los 6 bancos (`TICKETS` / `TIKETS`), códigos CIK de la SEC y alias de importación semántico.
 
 ---
 
@@ -91,7 +109,7 @@ TFM-Master/
 * **Data Processing & Validación:** `pandas`, `pydantic` V2 y `pydantic-settings`.
 * **Almacenamiento Cloud:** `boto3` y `aioboto3` (compatible con API S3 Signature v4 sobre Cloudflare R2).
 * **Data Science & ML (en despliegue):** `transformers` (`ProsusAI/finbert`), `torch`, `lightgbm`, `xgboost`, `shap`, `boruta`.
-* **Testing & Calidad:** `pytest`, `pytest-asyncio`, `pytest-cov`, `moto` (mocking en memoria de AWS S3) y `SonarCloud`.
+* **Testing & Calidad:** `pytest`, `pytest-asyncio`, `pytest-cov`, `moto` (mocking en memoria de AWS S3), `ruff` (linter/formatter) y `SonarCloud`.
 
 ---
 
