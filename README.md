@@ -56,10 +56,8 @@ TFM-Master/
 ├── docs/                         # Documentación formal y propuesta académica del TFM
 ├── img/                          # Diagramas arquitectónicos del sistema
 ├── src/
-│   ├── articulos/                # DOMINIO NOTICIAS: ETL y parsers de fuentes de texto
-│   │   ├── etl_multisource.py    # Pipeline ETL DuckDB -> Limpieza -> Parquet -> Cloudflare R2
-│   │   ├── fnspid_extractor.py   # Streaming parser para dataset FNSPID
-│   │   └── fnspid_extractor_v2.py# Parser FNSPID v2 con filtrado de tickers ambiguos
+│   ├── articulos/                # DOMINIO NOTICIAS: ETL y consolidación de noticias financieras
+│   │   └── etl_multisource.py    # Pipeline ETL DuckDB -> Limpieza -> Parquet -> Cloudflare R2
 │   ├── config/                   # CONFIGURACIÓN: BaseSettings tipada con Pydantic V2
 │   │   └── settings.py           # Variables de entorno (.env) y configuración de R2/AWS
 │   ├── dependencies/             # INYECCIÓN DE DEPENDENCIAS: Singletons de storage y compactador

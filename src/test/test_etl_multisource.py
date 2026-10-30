@@ -4,7 +4,6 @@ Tests unitarios para el pipeline ETL de noticias financieras multisource (src/ar
 
 from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
-import pytest
 
 from articulos.etl_multisource import (
     extraer_title_y_article,
@@ -33,7 +32,7 @@ def test_extraer_title_y_article_multilinea():
     texto = """Bank of America Expands Lending Program
 The Charlotte-based bank announced a multi-billion initiative today.
 Additional paragraph with detailed quotes from the CEO."""
-    
+
     title, article = extraer_title_y_article(texto)
     assert title == "Bank of America Expands Lending Program"
     assert "The Charlotte-based bank announced a multi-billion initiative today." in article
@@ -165,7 +164,7 @@ def test_save_and_upload():
          patch("pathlib.Path.stat", return_value=mock_stat), \
          patch("pathlib.Path.read_bytes", return_value=b"fake_parquet_bytes"), \
          patch("articulos.etl_multisource.get_storage_repository", return_value=mock_storage):
-        
+
         save_and_upload(df_sample)
 
         mock_to_parquet.assert_called_once()
@@ -179,7 +178,7 @@ def test_main_block():
     """Valida la ejecución del flujo completo de inicio a fin."""
     with patch("articulos.etl_multisource.extract_and_transform") as mock_extract, \
          patch("articulos.etl_multisource.save_and_upload") as mock_save:
-        
+
         mock_df = pd.DataFrame({"ticker": ["JPM"]})
         mock_extract.return_value = mock_df
 

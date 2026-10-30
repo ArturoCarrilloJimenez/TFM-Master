@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 
 from sec.adaptador import SECFiling
-from sec.etl_historico import SECHistoricalETL, TARGET_BANKS, run_sec_historical_etl
+from sec.etl_historico import SECHistoricalETL, run_sec_historical_etl
 
 
 @pytest.fixture
@@ -24,8 +24,8 @@ def mock_adapter():
                 items="2.02",
                 primary_document="doc8k.htm",
                 primary_doc_description="",
-                document_url=f"https://www.sec.gov/Archives/edgar/data/12345/000001234522000001/doc8k.htm",
-                index_url=f"https://www.sec.gov/Archives/edgar/data/12345/000001234522000001/0000012345-22-000001-index.htm",
+                document_url="https://www.sec.gov/Archives/edgar/data/12345/000001234522000001/doc8k.htm",
+                index_url="https://www.sec.gov/Archives/edgar/data/12345/000001234522000001/0000012345-22-000001-index.htm",
             ),
             SECFiling(
                 ticker=ticker,
@@ -39,8 +39,8 @@ def mock_adapter():
                 items="",
                 primary_document="doc10q.htm",
                 primary_doc_description="",
-                document_url=f"https://www.sec.gov/Archives/edgar/data/12345/000001234522000002/doc10q.htm",
-                index_url=f"https://www.sec.gov/Archives/edgar/data/12345/000001234522000002/0000012345-22-000002-index.htm",
+                document_url="https://www.sec.gov/Archives/edgar/data/12345/000001234522000002/doc10q.htm",
+                index_url="https://www.sec.gov/Archives/edgar/data/12345/000001234522000002/0000012345-22-000002-index.htm",
             ),
             SECFiling(
                 ticker=ticker,
@@ -54,8 +54,8 @@ def mock_adapter():
                 items="",
                 primary_document="doc10k.htm",
                 primary_doc_description="",
-                document_url=f"https://www.sec.gov/Archives/edgar/data/12345/000001234523000003/doc10k.htm",
-                index_url=f"https://www.sec.gov/Archives/edgar/data/12345/000001234523000003/0000012345-23-000003-index.htm",
+                document_url="https://www.sec.gov/Archives/edgar/data/12345/000001234523000003/doc10k.htm",
+                index_url="https://www.sec.gov/Archives/edgar/data/12345/000001234523000003/0000012345-23-000003-index.htm",
             ),
         ]
 
