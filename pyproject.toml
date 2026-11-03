@@ -26,6 +26,9 @@ dev = [
     "ipykernel>=7.4.0",
     "ruff>=0.8.0",
     "huggingface-hub[cli]>=2.3.0",
+    "sentence-transformers>=6.2.0",
+    "transformers>=5.22.1",
+    "torch>=2.15.0",
 ]
 
 
