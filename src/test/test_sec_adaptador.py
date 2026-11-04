@@ -1,6 +1,5 @@
-import json
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import urllib.error
 
 from sec.adaptador import SECEdgarAdapter, SECFiling

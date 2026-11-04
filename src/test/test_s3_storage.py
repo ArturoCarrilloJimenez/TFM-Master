@@ -1,13 +1,11 @@
 import os
 import pytest
-import asyncio
 import boto3
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from moto.server import ThreadedMotoServer
 
 from infrastructure.storage.base import BaseStorageRepository
 from infrastructure.storage.s3.adapter import S3StorageRepository
-from config.settings import settings
 
 pytestmark = pytest.mark.asyncio
 
@@ -73,7 +71,7 @@ def s3_test_env(moto_s3_server):
 async def test_repository_implements_base_interface():
     """Valida que S3StorageRepository herede de BaseStorageRepository y cumpla el contrato."""
     assert issubclass(S3StorageRepository, BaseStorageRepository)
-    
+
     repo = S3StorageRepository(
         endpoint_url="http://localhost:4566",
         bucket_name="my-bucket"
@@ -90,7 +88,7 @@ async def test_save_builds_correct_key_and_invokes_put_object():
         bucket_name="my-bucket",
         prefix_raw_data="custom-prefix"
     )
-    
+
     # Mockeamos el cliente aioboto3 interno
     mock_client = AsyncMock()
     repo._client = mock_client

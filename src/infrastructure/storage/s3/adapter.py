@@ -48,7 +48,7 @@ class S3StorageRepository(BaseStorageRepository):
         """Escribe bytes en S3/R2 respetando rutas canónicas del Data Lake."""
         target_bucket = bucket or self.bucket_name
         clean_key = key.lstrip('/')
-        if clean_key.startswith(("raw/", "processed/", "curated/", "compacted-data/")) or not self.prefix_raw_data:
+        if clean_key.startswith(("raw/", "raw-data/", "processed/", "curated/", "compacted-data/")) or not self.prefix_raw_data:
             target_key = clean_key
         else:
             target_key = f"{self.prefix_raw_data.rstrip('/')}/{clean_key}"
@@ -68,13 +68,14 @@ class S3StorageRepository(BaseStorageRepository):
     async def get(self, key: str, bucket: str | None = None) -> bytes:
         """Descarga y devuelve los bytes crudos de un objeto en S3/R2."""
         target_bucket = bucket or self.bucket_name
+        clean_key = key.lstrip('/')
         client = await self._get_client()
         try:
-            response = await client.get_object(Bucket=target_bucket, Key=key)
+            response = await client.get_object(Bucket=target_bucket, Key=clean_key)
             async with response["Body"] as stream:
                 return await stream.read()
         except Exception as e:
-            log.error(f"Error al leer de s3://{target_bucket}/{key}: {e}")
+            log.error(f"Error al leer de s3://{target_bucket}/{clean_key}: {e}")
             raise
 
     async def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:

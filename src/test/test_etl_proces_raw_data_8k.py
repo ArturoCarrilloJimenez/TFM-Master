@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import MagicMock
 from sec.etl_proces_raw_data_8k import (
     clean_text,
