@@ -183,12 +183,13 @@ async def test_sec_historical_etl_daily_production_window(
         assert call.kwargs["end_date"] == "2023-10-19"
 
 
-def test_tikets_shared_consistency():
-    from shared.tikets import TIKETS
-    assert len(TIKETS) == 6
+def test_tickets_shared_consistency():
+    from shared.tickets import TICKETS
+    assert len(TICKETS) == 6
     for ticker in ["JPM", "BAC", "WFC", "C", "GS", "MS"]:
-        assert ticker in TIKETS
-        cik_str, name = TIKETS[ticker]
+        assert ticker in TICKETS
+        cik_str = TICKETS[ticker]["cik"]
+        name = TICKETS[ticker]["name"]
         assert cik_str.startswith("CIK")
         assert len(name) > 0
-    assert TIKETS["MS"][0] == "CIK0000895421"
+    assert TICKETS["MS"]["cik"] == "CIK0000895421"

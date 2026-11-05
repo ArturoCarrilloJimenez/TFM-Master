@@ -32,7 +32,7 @@ El pipeline opera bajo una arquitectura **Medallion Data Lake** sobre almacenami
 
 ## 🏦 3. Universo Bancario Analizado (Big 6 US Banks)
 
-Los datos se encuentran filtrados y normalizados de forma canónica según los identificadores oficiales de la SEC definidos en [`src/shared/tikets.py`](src/shared/tikets.py):
+Los datos se encuentran filtrados y normalizados de forma canónica según los identificadores oficiales de la SEC definidos en [`src/shared/tickets.py`](src/shared/tickets.py):
 
 | Ticker | Entidad Financiera | CIK SEC | Cobertura Noticias (2010-2023) | Eventos 8-K (2010-2023) |
 | :---: | :--- | :---: | :---: | :---: |
@@ -80,11 +80,11 @@ TFM-Master/
 │   │   ├── adaptador.py          # Adaptador de búsqueda dinámica y paginación profunda
 │   │   ├── etl_historico.py      # Job de descubrimiento y reporte de filings 2010-2023
 │   │   └── etl_proces_raw_data_8k.py # Pipeline ETL para eventos SEC 8-K
-│   ├── shared/                   # TRANSVERSAL: Diccionario TIKETS/TICKETS y logger estructurado
+│   ├── shared/                   # TRANSVERSAL: Diccionario TICKETS y logger estructurado
 │   │   ├── README.md             # Guía de observabilidad y catálogo canónico bancario
 │   │   ├── logging.py
-│   │   ├── tickets.py            # Alias semántico canónico
-│   │   └── tikets.py
+│   │   └── tickets.py            # Catálogo canónico US Big 6 y constantes semánticas
+
 │   └── test/                     # TESTS: Suite completa de pruebas con Moto y pytest (92% cov)
 ├── pyproject.toml                # Gestión de dependencias y herramientas (uv + ruff)
 └── README.md                     # Documentación principal del repositorio
@@ -98,7 +98,7 @@ Para facilitar el trabajo en equipo y el desarrollo modular, cada paquete de sop
 
 * ⚙️ **[Módulo de Configuración (`src/config/README.md`)](src/config/README.md)**: Justificación arquitectónica de `settings` (Pydantic Settings) frente a `os.getenv`, catálogo de variables de entorno tipadas y guía para incorporar nuevas configuraciones.
 * 🏗️ **[Capa de Infraestructura (`src/infrastructure/README.md`)](src/infrastructure/README.md)**: Arquitectura hexagonal (Ports & Adapters), inyección de dependencias mediante `dependencies.py`, ejemplos de lectura/escritura en Cloudflare R2 sin instanciar `boto3.client` a mano, compactación columnar Parquet ZSTD y cliente de scraping distribuido.
-* 🧩 **[Recursos Transversales (`src/shared/README.md`)](src/shared/README.md)**: Sistema de observabilidad y logging estructurado (`Logger`), fuente única de verdad para los 6 bancos (`TICKETS` / `TIKETS`), códigos CIK de la SEC y alias de importación semántico.
+* 🧩 **[Recursos Transversales (`src/shared/README.md`)](src/shared/README.md)**: Sistema de observabilidad y logging estructurado (`Logger`), fuente única de verdad para los 6 bancos (`TICKETS`), códigos CIK de la SEC y constantes semánticas.
 
 ---
 

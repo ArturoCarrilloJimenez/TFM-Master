@@ -40,7 +40,7 @@ Additional paragraph with detailed quotes from the CEO."""
 
 
 def test_extract_and_transform_pipeline():
-    """Valida el filtrado, deduplicación, filtro de falsos positivos de C y mapeo canónico de TIKETS."""
+    """Valida el filtrado, deduplicación, filtro de falsos positivos de C y mapeo canónico de TICKETS."""
     mock_raw_data = pd.DataFrame([
         {
             "ticker": "JPM",
@@ -107,7 +107,7 @@ def test_extract_and_transform_pipeline():
     assert len(df_result) == 3
     assert set(df_result["ticker"]) == {"JPM", "WFC", "C"}
 
-    # Verificar enriquecimiento con TIKETS
+    # Verificar enriquecimiento con TICKETS
     jpm_row = df_result[df_result["ticker"] == "JPM"].iloc[0]
     assert jpm_row["company_name"] == "JPMorgan Chase & Co."
     assert jpm_row["cik"] == "CIK0000019617"
@@ -135,7 +135,7 @@ def test_extract_and_transform_pipeline():
 
 
 def test_save_and_upload():
-    """Valida la generación de parquet local y la llamada de subida a Cloudflare R2 vía Storage Repository."""
+    """Valida la compactación en memoria vía compactor centralizado y la subida a Cloudflare R2 con cierre limpio."""
     df_sample = pd.DataFrame([
         {
             "ticker": "GS",
@@ -154,24 +154,26 @@ def test_save_and_upload():
         }
     ])
 
-    mock_stat = MagicMock()
-    mock_stat.st_size = 1024 * 1024 * 5
+    mock_compactor = MagicMock()
+    mock_compactor.compact.return_value = b"fake_parquet_bytes"
 
     mock_storage = MagicMock()
     mock_storage.save = AsyncMock()
+    mock_storage.close = AsyncMock()
 
-    with patch.object(df_sample, "to_parquet") as mock_to_parquet, \
-         patch("pathlib.Path.stat", return_value=mock_stat), \
-         patch("pathlib.Path.read_bytes", return_value=b"fake_parquet_bytes"), \
+    with patch("articulos.etl_multisource.get_compactor", return_value=mock_compactor), \
+         patch("pathlib.Path.write_bytes") as mock_write, \
          patch("articulos.etl_multisource.get_storage_repository", return_value=mock_storage):
 
         save_and_upload(df_sample)
 
-        mock_to_parquet.assert_called_once()
+        mock_compactor.compact.assert_called_once()
+        mock_write.assert_called_once_with(b"fake_parquet_bytes")
         mock_storage.save.assert_called_once_with(
             key="raw/huggingface/multisource_bancos_2010_2023.parquet",
             body=b"fake_parquet_bytes"
         )
+        mock_storage.close.assert_called_once()
 
 
 def test_main_block():

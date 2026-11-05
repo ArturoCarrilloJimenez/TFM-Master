@@ -2,9 +2,9 @@
 
 import pandas as pd
 import yfinance as yf
-from shared.tikets import TIKETS
+from shared.tickets import TICKETS
 
-BANCOS_TICKERS_DEFAULT: list[str] = list(TIKETS.keys())
+BANCOS_TICKERS_DEFAULT: list[str] = list(TICKETS.keys())
 
 
 def aplanar_columnas_multiindex(df: pd.DataFrame) -> pd.DataFrame:
