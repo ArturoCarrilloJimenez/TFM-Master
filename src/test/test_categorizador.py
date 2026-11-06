@@ -210,3 +210,74 @@ def test_etl_categorizacion_poda_esquema_silver():
     assert clean_row["ticker"] == "JPM"
     assert clean_row["category"] == "Earnings"
     assert clean_row["is_ruido"] is False
+
+
+def test_worker_init_and_chunk_processor():
+    """Verifica que las funciones de inicialización y procesamiento de chunks por worker operen correctamente."""
+    from articulos.models.categorizador import _init_worker, _procesar_chunk_worker
+
+    _init_worker("sentence-transformers/all-MiniLM-L6-v2", "cpu")
+    chunk = [
+        {
+            "ticker": "BAC",
+            "title": "Bank of America announces new quarterly dividend",
+            "article": "The board approved a dividend increase today for shareholders.",
+        }
+    ]
+    res = _procesar_chunk_worker(chunk, batch_size=1)
+    assert len(res) == 1
+    assert res[0]["ticker"] == "BAC"
+    assert "category" in res[0]
+    assert "is_ruido" in res[0]
+
+
+def test_extraer_fragmento_boilerplate_skip_and_fallback():
+    """Verifica el salto de párrafos de boilerplate sectorial y el fallback cuando no se menciona al banco."""
+    # 1. Párrafo con boilerplate sectorial debe ser ignorado en favor del párrafo legítimo
+    cuerpo_boilerplate = (
+        "is a part of the finance sector, which includes Bank of America and other institutions.\n"
+        "Bank of America announced an expansion of its small business lending program today."
+    )
+    frag, presence = CategorizadorArticulos.extraer_fragmento_y_presencia(
+        "Expansion", cuerpo_boilerplate, "BAC"
+    )
+    assert presence is True
+    assert "expansion of its small business" in frag.lower()
+
+    # 2. Cuerpo sin mención del banco debe devolver fallback con presence=False
+    cuerpo_sin_banco = "Apple announced a new line of consumer electronics and tablets in California."
+    frag_fallback, presence_fallback = CategorizadorArticulos.extraer_fragmento_y_presencia(
+        "Tech News", cuerpo_sin_banco, "JPM"
+    )
+    assert presence_fallback is False
+    assert "Apple announced" in frag_fallback
+
+
+def test_es_rol_analista_note_to_clients():
+    """Verifica la detección de rol analista cuando el banco está en el titular pero emite un note to clients sobre otro activo."""
+    titular = "Goldman Sachs market commentary on oil"
+    cuerpo = "In a note to clients, strategists stated their bullish conviction regarding crude demand."
+    assert CategorizadorArticulos.es_rol_analista_tercero(titular, cuerpo, "GS") is True
+
+
+def test_clasificar_dataset_multiprocessing_mock():
+    """Verifica que clasificar_dataset particione y orqueste ProcessPoolExecutor cuando el volumen supera 2000 filas."""
+    from unittest.mock import MagicMock, patch
+
+    model = CategorizadorArticulos()
+    records = [{"title": f"News {i}", "ticker": "JPM"} for i in range(2005)]
+
+    mock_future = MagicMock()
+    mock_future.result.return_value = [{"title": "News 0", "ticker": "JPM", "is_ruido": False}]
+
+    mock_executor = MagicMock()
+    mock_executor.__enter__.return_value = mock_executor
+    mock_executor.submit.return_value = mock_future
+
+    with patch("articulos.models.categorizador.ProcessPoolExecutor", return_value=mock_executor), \
+         patch("articulos.models.categorizador.get_optimal_workers", return_value=2):
+
+        results = model.clasificar_dataset(records, batch_size=128)
+        assert len(results) == 2  # 2 chunks ejecutados
+        assert mock_executor.submit.call_count == 2
+
