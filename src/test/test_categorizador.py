@@ -3,9 +3,12 @@
 from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
-import pytest
 
-from articulos.models.categorizador import CategorizadorArticulos
+from articulos.models.categorizador import (
+    CategorizadorArticulos,
+    get_optimal_workers,
+    is_running_in_lambda,
+)
 
 
 def test_contiene_alias_frontera_palabra():
@@ -47,6 +50,18 @@ def test_extraer_fragmento_relevante_boilerplate():
     frag = CategorizadorArticulos.extraer_fragmento_relevante("Titular", cuerpo, "JPM")
     assert "raised its dividend by 10 percent" in frag
     assert "part of the finance sector" not in frag
+
+
+def test_extraer_fragmento_y_presencia():
+    """Verifica que extraer_fragmento_y_presencia reporte correctamente la presencia del banco."""
+    cuerpo = "Economic update. Wells Fargo reported solid retail deposit growth this year."
+    frag, presente = CategorizadorArticulos.extraer_fragmento_y_presencia("Update", cuerpo, "WFC")
+    assert presente is True
+    assert "Wells Fargo" in frag
+
+    cuerpo_ajeno = "Tesla shares fell amid broader automotive market declines."
+    frag_ajeno, presente_ajeno = CategorizadorArticulos.extraer_fragmento_y_presencia("Update", cuerpo_ajeno, "WFC")
+    assert presente_ajeno is False
 
 
 def test_es_rol_analista_tercero():
@@ -115,3 +130,83 @@ def test_clasificar_noticia_y_dataset(mock_st_cls):
     assert "process_text" in results[0]
     assert "category" in results[0]
     assert "is_ruido" in results[0]
+
+
+def test_lambda_detection_and_optimal_workers(monkeypatch):
+    """Verifica la detección automática del entorno AWS Lambda vs entorno local."""
+    # 1. En entorno local estándar (sin variables de Lambda)
+    monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
+    monkeypatch.delenv("LAMBDA_TASK_ROOT", raising=False)
+    assert not is_running_in_lambda()
+    workers_local = get_optimal_workers()
+    assert workers_local >= 1
+    assert workers_local <= 4
+
+    # Override explícito
+    assert get_optimal_workers(max_workers=2) == 2
+
+    # 2. En entorno simulado de AWS Lambda
+    monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "tfm-scraper-sentiment")
+    assert is_running_in_lambda()
+    assert get_optimal_workers() == 1
+
+
+def test_clasificar_dataset_preserva_todos_los_campos_y_anexa_predicciones():
+    """Verifica que el modelo sea agnóstico al esquema: preserva 100% de los campos de entrada y anexa sus predicciones."""
+    model = CategorizadorArticulos()
+    records = [
+        {
+            "ticker": "JPM",
+            "company_name": "JPMorgan Chase & Co.",
+            "cik": "0000019617",
+            "date": "2023-01-15",
+            "datetime": "2023-01-15 10:00:00+00:00",
+            "title": "JPMorgan reports earnings beat",
+            "article": "JPMorgan profit jumped 20% in the last quarter.",
+            "text": "JPMorgan reports earnings beat\nJPMorgan profit jumped 20% in the last quarter.",
+            "publisher": "SentARL",
+            "url": "https://example.com/news/123",
+            "source_dataset": "fnspid_news",
+            "ticker_count": 1,
+            "is_multisubject": False,
+        }
+    ]
+
+    results = model.clasificar_dataset(records, batch_size=1)
+    assert len(results) == 1
+    res = results[0]
+
+    # Todos los campos originales se preservan de forma inocua por el modelo
+    for k, v in records[0].items():
+        assert res[k] == v
+
+    # Columnas del modelo inyectadas
+    assert "process_text" in res
+    assert "category" in res
+    assert "confianza" in res
+    assert "is_ruido" in res
+
+
+def test_etl_categorizacion_poda_esquema_silver():
+    """Verifica que el orquestador ETL descarte únicamente las columnas crudas redundantes para Silver."""
+    from articulos.etl_categorizacion import COLUMNAS_DESCARTAR_SILVER
+
+    row = {
+        "ticker": "JPM",
+        "company_name": "JPMorgan Chase & Co.",
+        "text": "full text",
+        "publisher": "SentARL",
+        "url": "https://example.com",
+        "source_dataset": "fnspid",
+        "category": "Earnings",
+        "is_ruido": False,
+    }
+
+    clean_row = {k: v for k, v in row.items() if k not in COLUMNAS_DESCARTAR_SILVER}
+    assert "text" not in clean_row
+    assert "publisher" not in clean_row
+    assert "url" not in clean_row
+    assert "source_dataset" not in clean_row
+    assert clean_row["ticker"] == "JPM"
+    assert clean_row["category"] == "Earnings"
+    assert clean_row["is_ruido"] is False

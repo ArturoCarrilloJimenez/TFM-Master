@@ -40,8 +40,11 @@ ALIAS_BANCOS: dict[str, list[str]] = {ticker: data["aliases"] for ticker, data i
 
 # Términos macroeconómicos y de banca central (afectan transversalmente al sistema financiero)
 MACRO_KEYWORDS: list[str] = [
-    "fed", "fomc", "federal reserve", "interest rates", "inflation",
-    "powell", "treasury", "yield curve", "central bank", "monetary policy", "deficit",
+    "fed", "fomc", "federal reserve", "interest rates", "interest rate",
+    "rate hike", "rate cut", "inflation", "cpi", "powell", "treasury",
+    "yield curve", "central bank", "monetary policy", "deficit",
+    "banking sector", "financial sector", "stress test", "stress tests",
+    "liquidity", "gdp", "recession",
 ]
 
 # Patrones estándar de párrafos boilerplate de industria

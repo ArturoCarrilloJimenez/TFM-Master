@@ -10,23 +10,24 @@ from shared.logging import Logger
 
 logger = Logger("ETLCategorizacion")
 
+COLUMNAS_DESCARTAR_SILVER: set[str] = {"text", "publisher", "url", "source_dataset"}
+
 
 async def process_data(
     input_s3_key: str = "raw/huggingface/multisource_bancos_2010_2023.parquet",
     output_s3_key: str = "processed/huggingface/multisource_bancos_2010_2023.parquet",
     local_backup_path: str = "data/processed_multisource_bancos_2010_2023.parquet",
-    batch_size: int = 256,
+    batch_size: int = 128,
 ) -> None:
-    """Orquesta la descarga del dataset crudo, clasificación vectorial en memoria y subida a Cloudflare R2."""
-    repo = get_storage_repository()
+    """Orquesta la descarga del dataset crudo desde S3/R2, clasificación vectorial en memoria y persistencia."""
     compact = get_compactor()
+    repo = get_storage_repository()
+    t_start = time.time()
 
     logger.info(f"Descargando dataset crudo del Data Lake: [{repo.bucket_name}/{input_s3_key}]...")
-    t_start = time.time()
     try:
         data = await repo.get(input_s3_key)
     finally:
-        # Cierre explícito del canal para evitar timeout de sockets inactivos durante el cómputo del modelo
         await repo.close()
 
     # Descompactación directa a lista de diccionarios en memoria sin overhead de DataFrames
@@ -38,9 +39,15 @@ async def process_data(
     model = CategorizadorArticulos()
     data_process = model.clasificar_dataset(records, batch_size=batch_size)
 
-    # 2. Compactación columnar Parquet con compresión ZSTD
-    logger.info(f"Compactando {len(data_process):,} registros a formato Apache Parquet (ZSTD)...")
-    data_compact = compact.compact(data_process)
+    # 2. Poda de esquema para la capa Silver (elimina campos redundantes y metadatos crudos)
+    data_silver = [
+        {k: v for k, v in row.items() if k not in COLUMNAS_DESCARTAR_SILVER}
+        for row in data_process
+    ]
+
+    # 3. Compactación columnar Parquet con compresión ZSTD
+    logger.info(f"Compactando {len(data_silver):,} registros a formato Apache Parquet (ZSTD)...")
+    data_compact = compact.compact(data_silver)
 
     # 3. Guardado de seguridad local
     backup_file = Path(local_backup_path)
