@@ -86,14 +86,16 @@ print(f"Archivos encontrados: {len(keys)}")
 En notebooks con Pandas, para cargar un DataFrame directamente en memoria sin archivos temporales:
 
 ```python
-import io
 import asyncio
 import pandas as pd
-from dependencies.dependencies import get_storage_repository
+from dependencies.dependencies import get_storage_repository, get_compactor
 
 storage = get_storage_repository()
+compactor = get_compactor()
+
 data = asyncio.run(storage.get("raw/yfinance/stocks_2010_2023.parquet"))
-df = pd.read_parquet(io.BytesIO(data))
+records = compactor.decompact(data)
+df = pd.DataFrame(records)
 display(df.head())
 ```
 

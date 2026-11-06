@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 
 from shared.logging import Logger
-from shared.tikets import TIKETS
+from shared.tickets import TICKETS
 from sec.adaptador import SECEdgarAdapter, SECFiling
 from infrastructure.compaction.base import BaseDataCompactor
 from infrastructure.storage.base import BaseStorageRepository
@@ -15,8 +15,8 @@ from dependencies.dependencies import (
 
 logger = Logger("SECHistoricalETL")
 
-# Universo de los 6 gigantes bancarios derivado de la fuente única de verdad (shared.tikets)
-TARGET_BANKS: dict[str, str] = {ticker: meta[1] for ticker, meta in TIKETS.items()}
+# Universo de los 6 gigantes bancarios derivado de la fuente única de verdad (shared.tickets)
+TARGET_BANKS: dict[str, str] = {ticker: data["name"] for ticker, data in TICKETS.items()}
 
 
 class SECHistoricalETL:

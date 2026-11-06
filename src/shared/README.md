@@ -1,17 +1,17 @@
 # Módulo de Recursos Transversales (`src/shared/`)
 
-Este paquete agrupa las utilidades compartidas, estándares de observabilidad y la **fuente única de verdad** (*Single Source of Truth*) para los identificadores de entidades financieras analizadas en el proyecto **TFM-Master**.
+Este paquete agrupa las utilidades compartidas, estándares de observabilidad y la **fuente única de verdad** (*Single Source of Truth*) para los identificadores de entidades financieras y constantes semánticas en el proyecto **TFM-Master**.
 
 ---
 
 ## 🏛️ Arquitectura del Módulo
 
-`src/shared/` está diseñado para ser completamente agnóstico al dominio, sirviendo como soporte transversal para todos los módulos del sistema (ETLs, adaptadores de infraestructura, extractores y notebooks):
+`src/shared/` está diseñado para ser completamente agnóstico al dominio, sirviendo como soporte transversal para todos los módulos del sistema (ETLs, adaptadores de infraestructura, clasificadores y notebooks):
 
 ```mermaid
 flowchart TD
     subgraph Consumers ["Módulos Consumidores"]
-        A1["src/articulos/ (ETL Multisource)"]
+        A1["src/articulos/ (ETL Multisource & Categorizador)"]
         A2["src/mercado/ (Yahoo Finance Extractor)"]
         A3["src/sec/ (SEC EDGAR Adapter & ETL)"]
         A4["src/infrastructure/ (Storage & Scraper)"]
@@ -20,7 +20,7 @@ flowchart TD
 
     subgraph Shared ["src/shared/ (Recursos Transversales)"]
         L["logging.py<br/><b>Logger Estructurado</b><br/>(Colores ANSI + Contexto JSON)"]
-        T["tikets.py / tickets.py<br/><b>Catálogo Canónico US Big 6</b><br/>(Ticker, CIK oficial, Razón Social)"]
+        T["tickets.py<br/><b>Catálogo Canónico US Big 6</b><br/>(Ticker, CIK oficial, Razón Social, Aliases)"]
     end
 
     A1 --> L
@@ -75,49 +75,39 @@ logger.error("Fallo al conectar con el endpoint", context={"error_code": 503})
 
 ---
 
-### 2. Fuente Única de Verdad Bancaria (`tikets.py` & `tickets.py`)
+### 2. Fuente Única de Verdad Bancaria y Constantes Semánticas (`tickets.py`)
 
-Centraliza el universo canónico de los 6 gigantes de la banca estadounidense (**US Big 6 Banks**) con sus claves bursátiles oficiales, códigos **CIK** ante la SEC y razones sociales registradas.
+Centraliza el universo canónico de los 6 gigantes de la banca estadounidense (**US Big 6 Banks**) con sus claves bursátiles oficiales, códigos **CIK** ante la SEC, razones sociales y alias corporativos. Además, almacena vocabulario transversal de saliencia semántica (`MACRO_KEYWORDS`, `BOILERPLATE_SECTOR_PATTERNS`, `ANALYST_ROLE_TERMS`).
 
-#### 🔤 Soporte de Alias Dual (`tickets` / `tikets`):
-Para evitar errores tipográficos o discrepancias entre miembros del equipo, el catálogo puede importarse indistintamente bajo cualquiera de las dos nomenclaturas:
+#### 📋 Datos Maestros de Entidades (`TICKETS`):
 
-```python
-# Ambas formas son 100% válidas y equivalentes:
-from shared.tickets import TICKETS
-from shared.tikets import TIKETS
-
-assert TICKETS == TIKETS
-```
-
-#### 📋 Datos Maestros de Entidades (`TIKETS` / `TICKETS`):
-
-| Ticker | CIK SEC | Razón Social Oficial Registrada |
-| :---: | :---: | :--- |
-| **`JPM`** | `CIK0000019617` | JPMorgan Chase & Co. |
-| **`BAC`** | `CIK0000070858` | Bank of America Corp /DE/ |
-| **`WFC`** | `CIK0000072971` | Wells Fargo & Company/MN |
-| **`C`** | `CIK0000831001` | Citigroup Inc. |
-| **`GS`** | `CIK0000886982` | Goldman Sachs Group Inc. |
-| **`MS`** | `CIK0000895421` | Morgan Stanley |
+| Ticker | CIK SEC | Razón Social Oficial Registrada | Aliases Principales |
+| :---: | :---: | :--- | :--- |
+| **`JPM`** | `CIK0000019617` | JPMorgan Chase & Co. | `jpmorgan`, `chase`, `jamie dimon`, `jpm` |
+| **`BAC`** | `CIK0000070858` | Bank of America Corp /DE/ | `bank of america`, `bofa`, `merrill lynch`, `bac` |
+| **`WFC`** | `CIK0000072971` | Wells Fargo & Company/MN | `wells fargo`, `charlie scharf`, `wfc` |
+| **`C`** | `CIK0000831001` | Citigroup Inc. | `citigroup`, `citi`, `jane fraser` |
+| **`GS`** | `CIK0000886982` | Goldman Sachs Group Inc. | `goldman sachs`, `goldman`, `david solomon`, `gs` |
+| **`MS`** | `CIK0000895421` | Morgan Stanley | `morgan stanley`, `ted pick`, `james gorman`, `ms` |
 
 #### 🚀 Ejemplos de uso:
 
 ```python
-from shared.tickets import TICKETS
+from shared.tickets import TICKETS, ALIAS_BANCOS, MACRO_KEYWORDS
 
 # 1. Obtener la lista completa de tickers objetivo:
 tickers = list(TICKETS.keys())
 # ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS']
 
-# 2. Obtener el CIK de un banco para la API de SEC EDGAR:
-cik, razon_social = TICKETS["JPM"]
-print(f"Banco: {razon_social} | CIK: {cik}")
+# 2. Obtener el CIK o Razón Social de un banco:
+cik = TICKETS["JPM"]["cik"]
+razon_social = TICKETS["JPM"]["name"]
+aliases = TICKETS["JPM"]["aliases"]
 
 # 3. Mapear nombres en un DataFrame de Pandas:
 import pandas as pd
 df = pd.DataFrame({"ticker": ["JPM", "BAC", "GS"]})
-df["company_name"] = df["ticker"].map(lambda t: TICKETS.get(t, ("", ""))[1])
+df["company_name"] = df["ticker"].map(lambda t: TICKETS.get(t, {}).get("name", ""))
 ```
 
 ---
@@ -125,5 +115,5 @@ df["company_name"] = df["ticker"].map(lambda t: TICKETS.get(t, ("", ""))[1])
 ## ⚠️ Reglas y Buenas Prácticas
 
 1. **Nunca escribir `print()` en producción**: Utiliza siempre `Logger("NombreDelModulo")`.
-2. **Nunca duplicar listas de tickers hardcodeadas**: Si un script o notebook necesita saber cuáles son los bancos analizados, debe importar `TICKETS` o `TIKETS` desde `src/shared/`.
+2. **Nunca duplicar listas de tickers hardcodeadas**: Si un script o notebook necesita saber cuáles son los bancos analizados, debe importar `TICKETS` desde `src/shared/tickets.py`.
 3. **No introducir lógica de negocio en `shared`**: Este paquete solo debe contener contratos maestros y utilidades sin dependencias de dominio.

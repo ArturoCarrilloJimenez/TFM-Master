@@ -6,25 +6,26 @@ normaliza, enriquece, deduplica y carga a Cloudflare R2 bajo 'raw/huggingface/mu
 """
 
 import asyncio
-import sys
+
 from pathlib import Path
 import duckdb
 import pandas as pd
 
-# Asegurar path para módulos del proyecto
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-SRC_DIR = PROJECT_ROOT / "src"
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
 
-from dependencies.dependencies import get_storage_repository
+
+
+
+
+
+
+
+from dependencies.dependencies import get_storage_repository, get_compactor
 from shared.logging import Logger
 
 logger = Logger("ETLMultisource")
-from shared.tikets import TIKETS
+from shared.tickets import TICKETS
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "src" / "data" / "financial_news_multisource" / "data"
 LOCAL_OUTPUT = PROJECT_ROOT / "src" / "data" / "multisource_bancos_2010_2023.parquet"
 R2_OBJECT_KEY = "raw/huggingface/multisource_bancos_2010_2023.parquet"
@@ -52,7 +53,7 @@ def extract_and_transform() -> pd.DataFrame:
     
 
     con = duckdb.connect()
-    tickers = list(TIKETS.keys())
+    tickers = list(TICKETS.keys())
     tickers_sql = ", ".join([f"'{t}'" for t in tickers])
 
     query = f"""
@@ -148,9 +149,9 @@ def extract_and_transform() -> pd.DataFrame:
         con.close()
     logger.info(f"Total filas extraídas brutas: {len(df):,}")
 
-    # Enriquecer con metadatos de TIKETS
-    df["company_name"] = df["ticker"].map(lambda t: TIKETS.get(t, ("", ""))[1])
-    df["cik"] = df["ticker"].map(lambda t: TIKETS.get(t, ("", ""))[0])
+    # Enriquecer con metadatos de TICKETS
+    df["company_name"] = df["ticker"].map(lambda t: TICKETS.get(t, {}).get("name", ""))
+    df["cik"] = df["ticker"].map(lambda t: TICKETS.get(t, {}).get("cik", ""))
 
     # Normalizar fechas a Timestamp UTC
     df["datetime"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
@@ -220,14 +221,17 @@ def extract_and_transform() -> pd.DataFrame:
 
 
 def save_and_upload(df: pd.DataFrame) -> None:
-    """Guarda en local como Parquet y sube a Cloudflare R2 usando el Storage Repository."""
-    logger.info("2. Guardando archivo local y subiendo a Cloudflare R2...")
+    """Compacta en memoria con PyArrow ZSTD, guarda backup local y sube a Cloudflare R2."""
+    logger.info("2. Compactando datos con infraestructura centralizada y subiendo a Cloudflare R2...")
+    compact = get_compactor()
+    records = df.to_dict(orient="records")
+    parquet_bytes = compact.compact(records, compression="ZSTD")
 
     # 1. Guardar local
     LOCAL_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Guardando Parquet comprimido en: {LOCAL_OUTPUT}")
-    df.to_parquet(LOCAL_OUTPUT, compression="zstd", index=False)
-    file_size_mb = LOCAL_OUTPUT.stat().st_size / (1024 * 1024)
+    logger.info(f"Guardando copia local en: {LOCAL_OUTPUT}")
+    LOCAL_OUTPUT.write_bytes(parquet_bytes)
+    file_size_mb = len(parquet_bytes) / (1024 * 1024)
     logger.info(f"Archivo local generado exitosamente: {file_size_mb:.2f} MB")
 
     # 2. Conectar a S3/R2 mediante el repositorio centralizado de infraestructura
@@ -235,8 +239,15 @@ def save_and_upload(df: pd.DataFrame) -> None:
     storage = get_storage_repository()
 
     logger.info("Subiendo archivo Parquet a R2...")
-    parquet_bytes = LOCAL_OUTPUT.read_bytes()
-    asyncio.run(storage.save(key=R2_OBJECT_KEY, body=parquet_bytes))
+
+    async def _upload() -> None:
+        try:
+            await storage.save(key=R2_OBJECT_KEY, body=parquet_bytes)
+            logger.info("Subida a R2 completada con éxito.")
+        finally:
+            await storage.close()
+
+    asyncio.run(_upload())
     logger.info("Subida a R2 completada con éxito.")
 
     logger.info("ETL completada satisfactoriamente.")
