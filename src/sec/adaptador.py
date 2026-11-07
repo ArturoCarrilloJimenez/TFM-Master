@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from shared.logging import Logger
-from shared.tikets import TIKETS
+from shared.tickets import TICKETS
 
 logger = Logger("SECEdgarAdapter")
 
@@ -39,8 +39,11 @@ class SECEdgarAdapter:
     SEC_ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data"
     DEFAULT_USER_AGENT = "TFM_Data_Science_EBIS discovery_scraper@ebis.edu"
 
-    # Mapeo O(1) de los bancos objetivo importado de shared.tikets
-    KNOWN_CIKS: dict[str, tuple[str | int, str]] = dict(TIKETS)
+    # Mapeo O(1) de los bancos objetivo importado de shared.tickets
+    KNOWN_CIKS: dict[str, tuple[int, str]] = {
+        t: (int(str(d["cik"]).replace("CIK", "").lstrip("0")), d["name"])
+        for t, d in TICKETS.items()
+    }
 
     def __init__(self, user_agent: str | None = None, min_request_interval: float = 0.12):
         self.user_agent = user_agent or self.DEFAULT_USER_AGENT

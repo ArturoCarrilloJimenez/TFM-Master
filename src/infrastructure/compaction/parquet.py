@@ -99,23 +99,27 @@ class ParquetCompactor(BaseDataCompactor):
             logger.error(f"Fallo durante la compactación Parquet con PyArrow: {e}")
             raise RuntimeError(f"Error al generar binario Parquet: {e}") from e
 
-    def decompact(self, payload: bytes) -> list[dict[str, Any]]:
+    def decompact(self, payload: bytes | io.BytesIO) -> list[dict[str, Any]]:
         """Lee un binario Parquet desde la memoria y devuelve la lista de diccionarios original.
 
         Args:
-            payload: Bytes en memoria del archivo Parquet.
+            payload: Bytes en memoria o buffer BytesIO del archivo Parquet.
 
         Returns:
             list[dict[str, Any]]: Lista de diccionarios reconstruida a partir de la tabla columnar.
         """
-        if not payload:
+        if payload is None:
+            raise ValueError("El payload binario Parquet está vacío.")
+
+        raw_bytes = payload.getvalue() if isinstance(payload, io.BytesIO) else payload
+        if not raw_bytes:
             raise ValueError("El payload binario Parquet está vacío.")
 
         try:
-            buffer = io.BytesIO(payload)
+            buffer = io.BytesIO(raw_bytes)
             table = pq.read_table(buffer)
             records = table.to_pylist()
-            logger.info(f"Descompactados {len(records):,} registros desde buffer Parquet ({len(payload):,} bytes).")
+            logger.info(f"Descompactados {len(records):,} registros desde buffer Parquet ({len(raw_bytes):,} bytes).")
             return records
         except Exception as e:
             logger.error(f"Fallo durante la descompactación Parquet: {e}")

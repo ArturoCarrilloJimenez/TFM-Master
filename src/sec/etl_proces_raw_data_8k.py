@@ -10,13 +10,10 @@ utiliza la infraestructura centralizada del proyecto (ParquetCompactor y S3Stora
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-import io
 import json
 import re
 from typing import Any
-
 import pandas as pd
-import pyarrow.parquet as pq
 
 from config.settings import settings
 from dependencies.dependencies import get_compactor, get_storage_repository
@@ -26,15 +23,15 @@ from shared.logging import Logger
 
 logger = Logger("ETLProcesRawData8K")
 
-ITEM_HEADER_PATTERN = re.compile(r'Item\s+([1-9]\.[0-9]{2})[\.\:\s\-]*', re.IGNORECASE)
-SIGNATURE_PATTERN = re.compile(r'\bSIGNATURE[S]?\b', re.IGNORECASE)
+ITEM_HEADER_PATTERN = re.compile(r"Item\s+([1-9]\.[0-9]{2})[\.\:\s\-]*", re.IGNORECASE)
+SIGNATURE_PATTERN = re.compile(r"\bSIGNATURE[S]?\b", re.IGNORECASE)
 
 
 def clean_text(text: str) -> str:
     """Limpia caracteres de control y normaliza espacios en blanco."""
     if not text:
         return ""
-    return " ".join(re.sub(r'[\x00-\x1f\x7f-\x9f\ufffd]', ' ', text).split()).strip()
+    return " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f\ufffd]", " ", text).split()).strip()
 
 
 def extract_items_from_text(raw_text: str) -> list[dict[str, str]]:
@@ -42,7 +39,7 @@ def extract_items_from_text(raw_text: str) -> list[dict[str, str]]:
     if not raw_text:
         return []
 
-    norm_text = raw_text.replace('\xa0', ' ')
+    norm_text = raw_text.replace("\xa0", " ")
     matches = list(ITEM_HEADER_PATTERN.finditer(norm_text))
     if not matches:
         return []
@@ -59,7 +56,7 @@ def extract_items_from_text(raw_text: str) -> list[dict[str, str]]:
         if end > start:
             chunk = norm_text[start:end].strip()
             # Separar título de descripción por el primer punto
-            title_part, sep, body_part = chunk.partition('.')
+            title_part, sep, body_part = chunk.partition(".")
             if len(title_part) < 120 and sep:
                 title = clean_text(title_part)
                 body = clean_text(body_part)
@@ -69,11 +66,13 @@ def extract_items_from_text(raw_text: str) -> list[dict[str, str]]:
 
             content = body if body else title
             if len(content) >= 20:
-                items.append({
-                    "item": f"Item {item_code}",
-                    "item_description": title,
-                    "content": content,
-                })
+                items.append(
+                    {
+                        "item": f"Item {item_code}",
+                        "item_description": title,
+                        "content": content,
+                    }
+                )
 
     return items
 
@@ -109,14 +108,16 @@ class ETLProcesRawData8K:
             valid_dates = set(self.compact_dates)
         else:
             today = datetime.now(timezone.utc).date()
-            valid_dates = {(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(self.days_window)}
+            valid_dates = {
+                (today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(self.days_window)
+            }
 
         all_keys = await self.storage.list_keys(prefix=prefix, bucket=self.source_bucket)
         keys: list[str] = []
         for k in all_keys:
             if not k.endswith(".parquet"):
                 continue
-            date_m = re.search(r'year=(\d{4})/month=(\d{2})/day=(\d{2})', k)
+            date_m = re.search(r"year=(\d{4})/month=(\d{2})/day=(\d{2})", k)
             if date_m and f"{date_m.group(1)}-{date_m.group(2)}-{date_m.group(3)}" in valid_dates:
                 keys.append(k)
 
@@ -129,17 +130,16 @@ class ETLProcesRawData8K:
             raise FileNotFoundError(f"No se encontraron partes para job_id={self.job_id}")
 
         logger.info(f"Procesando {len(keys)} partes desde s3://{self.source_bucket}/...")
-        dfs: list[pd.DataFrame] = []
+
+        # Descompactación directa a diccionarios en memoria mediante el compactor centralizado (KISS + DRY)
+        all_raw_records: list[dict[str, Any]] = []
         for key in keys:
             data_bytes = await self.storage.get(key=key, bucket=self.source_bucket)
-            table = pq.read_table(io.BytesIO(data_bytes))
-            dfs.append(table.to_pandas())
-
-        df_source = pd.concat(dfs, ignore_index=True)
+            all_raw_records.extend(self.compactor.decompact(data_bytes))
 
         records: list[dict[str, Any]] = []
-        for _, row in df_source.iterrows():
-            url = row["url"]
+        for row in all_raw_records:
+            url = row.get("url", "")
 
             # Deserializar contexto de negocio inyectado por el scraper
             ctx_raw = row.get("context")
@@ -157,7 +157,7 @@ class ETLProcesRawData8K:
             company_name = ctx.get("company_name", "Unknown Financial Institution")
             cik = ctx.get("cik", 0)
             form = ctx.get("form", "8-K")
-            filing_date = ctx.get("filing_date", str(row["date"])[:10])
+            filing_date = ctx.get("filing_date", str(row.get("date", ""))[:10])
             report_date = ctx.get("report_date", filing_date)
             acceptance_date_time = ctx.get("acceptance_date_time", "")
             accession_number = ctx.get("accession_number", "")
@@ -165,34 +165,47 @@ class ETLProcesRawData8K:
             primary_doc_description = ctx.get("primary_doc_description", "")
             index_url = ctx.get("index_url", "")
 
-            raw_text = " ".join(json.loads(row["data"]).get("body_text", []))
+            data_field = row.get("data")
+            if isinstance(data_field, str):
+                try:
+                    parsed_data = json.loads(data_field)
+                except Exception:
+                    parsed_data = {}
+            elif isinstance(data_field, dict):
+                parsed_data = data_field
+            else:
+                parsed_data = {}
+
+            raw_text = " ".join(parsed_data.get("body_text", []))
 
             for item in extract_items_from_text(raw_text):
-                records.append({
-                    "ticker": ticker,
-                    "company_name": company_name,
-                    "cik": cik,
-                    "form": form,
-                    "filing_date": filing_date,
-                    "report_date": report_date,
-                    "acceptance_date_time": acceptance_date_time,
-                    "accession_number": accession_number,
-                    "item": item["item"],
-                    "item_description": item["item_description"],
-                    "content": item["content"],
-                    "primary_document": primary_document,
-                    "primary_doc_description": primary_doc_description,
-                    "document_url": url,
-                    "index_url": index_url,
-                })
+                records.append(
+                    {
+                        "ticker": ticker,
+                        "company_name": company_name,
+                        "cik": cik,
+                        "form": form,
+                        "filing_date": filing_date,
+                        "report_date": report_date,
+                        "acceptance_date_time": acceptance_date_time,
+                        "accession_number": accession_number,
+                        "item": item["item"],
+                        "item_description": item["item_description"],
+                        "content": item["content"],
+                        "primary_document": primary_document,
+                        "primary_doc_description": primary_doc_description,
+                        "document_url": url,
+                        "index_url": index_url,
+                    }
+                )
 
         df_out = pd.DataFrame(records)
-        logger.info(f"Dataset generado: {len(df_out)} items desde {len(df_source)} documentos.")
+        logger.info(f"Dataset generado: {len(df_out):,} items desde {len(all_raw_records):,} documentos.")
 
-        # 1. Compactación columnar usando ParquetCompactor
+        # 1. Compactación columnar usando ParquetCompactor centralizado
         parquet_bytes = self.compactor.compact(records, compression="ZSTD")
 
-        # 2. Persistencia en Data Lake usando S3StorageRepository
+        # 2. Persistencia en Data Lake usando S3StorageRepository centralizado
         await self.storage.save(key=self.target_key, body=parquet_bytes, bucket=self.target_bucket)
         logger.info(f"Guardado exitosamente en s3://{self.target_bucket}/{self.target_key}")
         return df_out

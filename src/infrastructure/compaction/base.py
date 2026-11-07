@@ -24,7 +24,7 @@ class BaseDataCompactor(ABC):
         pass
 
     @abstractmethod
-    def decompact(self, payload: bytes) -> list[dict[str, Any]]:
+    def decompact(self, payload: bytes | Any) -> list[dict[str, Any]]:
         """Deserializa un binario Parquet devolviendo la lista original de diccionarios.
 
         Args:
