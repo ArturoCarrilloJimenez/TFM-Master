@@ -204,3 +204,73 @@ Al cruzar los **12 Falsos Positivos (`FP`)** de la muestra con la lógica actual
 | **Nivel 2 (+ Estrategia 3 y 4)** | Contaminación de otro banco en titular + Nuevos patrones de Analista (`downgrade from`, `cuts forecast`) | **~2,000 – 2,500** adicionales | `~30,200` | Sube a **~90.0%** (elimina además los FP de las filas `14, 19, 22`) |
 | **Nivel 3 (+ Estrategia 5)** | Plantillas robotizadas 13F (`% of the total portfolio`) + Listas `Fast Money Picks` | **~500 – 800** adicionales | **`~29,500`** | Sube a **>94% – 100%** en la muestra (elimina también las filas `3 y 7`) |
 
+
+---
+
+## 5. Resultados Empíricos y Conclusiones del Post-Procesamiento (`zero_shot_clasiffication_FP_Analisis.ipynb`)
+
+Tras implementar y ejecutar la auditoría exhaustiva por cubetas en `src/notebooks/zero_shot_clasiffication_FP_Analisis.ipynb` sobre las **37,359 noticias útiles (`is_ruido == False`)** publicadas en `tfm-master-prediccion-bancos-usa/processed/huggingface/df_util/df_util_2010_2023.parquet`, se obtuvieron los siguientes resultados empíricos:
+
+### 5.1. Radiografía de Anclaje de la Entidad Bancaria (`N = 37,359`)
+
+| Tipo de Anclaje de la Entidad en el Texto | Noticias | % sobre Total Útiles (`37,359`) | Diagnóstico |
+| :--- | :---: | :---: | :--- |
+| **1. Anclaje Doble (Banco en Titular y en Cuerpo)** | **7,756** | **20.76%** | Señal de máxima pureza corporativa. |
+| **2. Titular Flash Válido (Banco en Titular, Sin Cuerpo)** | **7,085** | **18.96%** | Titulares directos válidos (ej. Reuters / Benzinga). |
+| **3. Banco en Titular, Cuerpo por Fallback** | **848** | **2.27%** | El titular nombra al banco, aunque el extracto tomó el inicio del texto. |
+| **4. Solo en Cuerpo (Titular NO menciona al banco)** | **14,217** | **38.06%** | Conviven noticias multipárrafo válidas con menciones en rol de analista y plantillas 13F. |
+| **5. Huérfano Sin Cuerpo (NI en Titular NI Cuerpo) `[FP]`** | **3,518** | **9.42%** | Anomalía sin cuerpo donde el banco no es nombrado (`2,165` sin mención al sector bancario). |
+| **6. Fallback Sin Banco (Con Cuerpo, pero NI en Titular NI Cuerpo) `[FP]`** | **3,935** | **10.53%** | Anomalía con cuerpo donde el extractor no halló al banco en el artículo (`2,030` sin mención al sector bancario). |
+
+---
+
+### 5.2. Cuantificación de las 5 Cubetas de Falsos Positivos vs. Núcleo Limpio (`TP`)
+
+La aplicación jerárquica de las 5 reglas identificó **6,225 Falsos Positivos (`16.66%`)** y consolidó un **Núcleo Limpio (`TP`) de 31,134 noticias (`83.34%`)**:
+
+| Cubeta de Auditoría (`fp_bucket`) | Noticias | % sobre Total Útiles (`37,359`) | Evaluación tras Inspección Muestral (Bloque 4) |
+| :--- | :---: | :---: | :--- |
+| ✅ **`TP: Núcleo Limpio (Señal Válida)`** | **31,134** | **83.34%** | Núcleo depurado con cobertura completa en los 6 bancos (2010–2023). |
+| ❌ **`FP_1: Huérfana Sin Cuerpo ni Banco`** | **2,165** | **5.80%** | **100% Ruido puro:** Titulares sin cuerpo de otros bancos o temas ajenos. |
+| ❌ **`FP_2: Fallback Con Cuerpo pero Sin Banco`** | **2,030** | **5.43%** | **100% Ruido puro:** Resúmenes generales de mercado donde el banco nunca es mencionado. |
+| ⚠️ **`FP_4: Banco como Analista / Pronóstico Macro`** | **980** | **2.62%** | Captura rol de analista, pero el término `estimates` en el regex atrapó también comparativas de *Zacks Consensus Estimate* sobre resultados reales del banco (refinable). |
+| ⚠️ **`FP_3: Otro Banco en Titular (Cross-Bleed)`** | **786** | **2.10%** | Captura noticias cuyo titular protagoniza un competidor sin términos comparativos en el extracto. |
+| ❌ **`FP_5: Plantilla 13F / ETF / Lista TV`** | **264** | **0.71%** | **100% Ruido robotizado:** Notas automáticas de fondos (`% of the total portfolio`), alertas de ETFs y listas de TV (`Fast Money Picks`). |
+
+#### Desglose por Banco (`Conteo por Cubeta y % Total de FP`)
+
+| Banco (`ticker`) | `FP_1` (Huérfana) | `FP_2` (Fallback) | `FP_3` (Cross-Bleed) | `FP_4` (Analista) | `FP_5` (13F / TV) | ✅ **`TP: Núcleo Limpio`** | Total Antes | `% FP Detectado` |
+| :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| **`BAC`** | 367 | 395 | 57 | 25 | 57 | **3,394** | 4,295 | **21.0%** |
+| **`C`** | 0 | 43 | 233 | 277 | 83 | **4,462** | 5,098 | **12.5%** |
+| **`GS`** | 133 | 443 | 148 | 207 | 28 | **5,749** | 6,708 | **14.3%** |
+| **`JPM`** | 738 | 691 | 62 | 38 | 2 | **5,179** | 6,710 | **22.8%** |
+| **`MS`** | 663 | 154 | 157 | 191 | 17 | **5,902** | 7,084 | **16.7%** |
+| **`WFC`** | 264 | 304 | 129 | 242 | 77 | **6,448** | 7,464 | **13.6%** |
+| **TOTAL** | **2,165** | **2,030** | **786** | **980** | **264** | **31,134** | **37,359** | **16.7%** |
+
+---
+
+### 5.3. Impacto en la Cobertura Temporal (2010–2023) Post-Limpieza
+
+Al verificar el mapa de calor anual (`Banco × Año`) después de retirar los `6,225` Falsos Positivos (Bloque 5):
+* **Cobertura anual intacta (`100%`):** Ningún banco queda con `0` noticias en ningún año entre 2010 y 2023 (`Años_con_0_Noticias = 0` para los 6 tickers).
+* **Mínimos anuales tras la depuración:**
+  * `BAC`: mínimo de **21 noticias** (en `2021`).
+  * `C`: mínimo de **26 noticias** (en `2021`).
+  * `GS`: mínimo de **81 noticias** (en `2015`).
+  * `JPM`: mínimo de **13 noticias** (en `2022`).
+  * `MS`: mínimo de **314 noticias** (en `2019`).
+  * `WFC`: mínimo de **61 noticias** (en `2010`).
+
+---
+
+### 5.4. Validación Muestral Final (`N = 30`, Bloque 6) y Ajustes Finos Identificados
+
+Al extraer una nueva muestra aleatoria estratificada de **5 noticias por banco (`N = 30`)** sobre el `TP: Núcleo Limpio`:
+1. **Salto de Precisión Muestral:** La precisión subió del **60.0% original (`18 TP / 30`) al 83.3% (`25 TP / 30`)**, alcanzando un **100% de precisión (`15 TP / 15`) en `JPM`, `MS` y `WFC`**.
+2. **Identificación de los 2 últimos ajustes para alcanzar `>95%` de pureza:**
+   * **Ajuste A (Eliminar la excepción `sector_bancario_en_title` en `FP_2`):** 4 de los 5 FP residuales de la muestra final (Filas `2, 3, 11 y 14` en `BAC` y `GS`) eran artículos **con cuerpo** donde el banco no aparecía ni en el titular ni en el fragmento, pero que se habían salvado porque el titular contenía la palabra genérica `"banks"`, `"financial stocks"` o `"stress tests"`. Exigir que toda noticia con cuerpo mencione al banco en el titular o en el fragmento elimina el 100% de estos *fallbacks* vacíos (`1,905` registros adicionales).
+   * **Ajuste B (Refinar el patrón léxico de `FP_4`):**
+     * Retirar la palabra `"estimates"` de `PATRON_ANALISTA_AMPLIADO` para no descartar artículos de resultados trimestrales que citan el *"Zacks Consensus Estimate"*.
+     * Ampliar `PATRON_PRONOSTICO_CASA` para admitir palabras intermedias entre el verbo y el sustantivo (ej. *"Goldman Sachs **lowers recession forecast**"* en la Fila `13`).
