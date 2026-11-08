@@ -1,206 +1,201 @@
-# 📋 Auditoría de Calidad y Origen de Falsos Positivos (FP) — Clasificación Semántica Zero-Shot (2010–2023)
+# 📋 Memoria Técnica de Auditoría: Extracción Primaria, Extracción Secundaria y Evolución de Calidad Zero-Shot (v1 vs. v2, 2010–2023)
 
-**Dataset auditado (Capa Silver):** `processed/huggingface/multisource_bancos_2010_2023.parquet`  
-**Universo:** US Big 6 (`BAC`, `C`, `GS`, `JPM`, `MS`, `WFC`)  
-**Ventana temporal:** `2010–2023` (**89,846 registros totales**: `37,359` útiles [`is_ruido == False`, `41.58%`] y `52,487` descartados como ruido [`is_ruido == True`, `58.42%`]).
+**Universo de estudio:** US Big 6 (`BAC`, `C`, `GS`, `JPM`, `MS`, `WFC`)  
+**Horizonte temporal:** `2010–2023` (**89,846 registros tras unificación Bronze**)  
+**Archivos en Cloudflare R2 (`tfm-master-prediccion-bancos-usa`):**
+* **Capa Silver completa:** `processed/huggingface/multisource_bancos_2010_2023.parquet` (`89,846` filas)
+* **Subconjunto útil v1 (Iteración inicial):** `processed/huggingface/df_util/df_util_2010_2023.parquet` (`37,359` filas útiles, `41.58%`)
+* **Subconjunto útil v2 (Iteración refinada actual):** `processed/huggingface/df_util/df_util_v2.parquet` (`27,217` filas útiles, `30.29%`)
 
 ---
 
-## 1. Matriz de Auditoría Cualitativa Muestral ($N = 60$ noticias)
+## 0. Hoja de Ruta y Arquitectura Evolutiva del Pipeline
 
-A partir de un muestreo aleatorio estratificado (`random_state = 42`) de **5 noticias útiles (`is_ruido == False`)** y **5 noticias descartadas (`is_ruido == True`)** por cada uno de los 6 bancos (**30 útiles + 30 de ruido = 60 noticias**), se evaluó manualmente la calidad del filtrado tomando:
-* **Clase Positiva:** Noticia que **SÍ sirve** (`is_ruido == False`, señal fundamental o bursátil del banco).
-* **Clase Negativa:** **Ruido** (`is_ruido == True`, noticias sobre terceros, menciones tangenciales o resúmenes genéricos).
+Para garantizar que el modelo de análisis de sentimiento financiero (**FinBERT**) reciba exclusivamente señal corporativa o sectorial legítima de cada banco y no ruido exógeno, el procesamiento de noticias se estructuró en **cinco fases secuenciales**:
 
-### 1.1. Resumen de la Matriz de Confusión Muestral ($N = 60$)
+```mermaid
+flowchart TD
+    A["1. Extracción Primaria (Capa Bronze)<br/>etl_multisource.py — 89,846 noticias (2010-2023)"] --> B["2. Extracción Secundaria y Clasificación v1<br/>df_util_2010_2023.parquet — 37,359 útiles (41.58%)"]
+    B --> C["3. EDA v1 y Auditoría de Puertas Traseras<br/>Precisión inicial: 60.0% (18 TP / 12 FP)<br/>Identificación de 5 cubetas (FP_1 a FP_5)"]
+    C --> D["4. Refinamiento de Extracción Secundaria (v2)<br/>etl_categorizacion.py + categorizador.py<br/>df_util_v2.parquet — 27,217 útiles (30.29%)"]
+    D --> E["5. EDA v2 y Verificación de TP / FN<br/>Precisión directa: 80.0%-83.3% | Post-limpieza: 96.7%<br/>Diagnóstico de sobre-filtrado en FP_3 y FP_4"]
+```
 
-| Predicción del Clasificador \ Realidad Manual | Real: Útil (Señal Financiera del Banco) | Real: Ruido (Terceros / General / Sin Contexto) | Total Muestra | Métrica Muestral |
+| Etapa del Proyecto | Script / Notebook Asociado | Objetivo Principal | Resultado Clave |
+| :--- | :--- | :--- | :--- |
+| **1. Extracción Primaria (Bronze)** | `src/articulos/etl_multisource.py`<br>`huggingface_2010_2023_EDA_v2.ipynb` | Unificar datasets de HuggingFace (FNSPID + Philipp), filtrar por el *US Big 6* (`2010–2023`), deduplicar y marcar artículos multi-sujeto (`ticker_count`). | **89,846 noticias** consolidadas sin huecos anuales, pero con alta contaminación cruzada (*ticker bleed*) y titulares sin cuerpo (`25.6%`). |
+| **2. Extracción Secundaria y Categorización v1** | `src/articulos/etl_categorizacion.py` *(v1)*<br>`df_util_2010_2023.parquet` | Extraer la ventana de contexto (`process_text`) alrededor del banco y clasificar con `all-MiniLM-L6-v2` en 6 categorías financieras vs. `ruido`. | Retuvo **37,359 noticias útiles (`41.58%`)** y descartó **52,487 (`58.42%`)**. |
+| **3. EDA v1 y Diagnóstico de Falsos Positivos** | `zero_shot_clasiffication_eda.ipynb`<br>`zero_shot_clasiffication_FP_Analisis.ipynb` | Auditar muestras estratificadas ($N=60$) y cuantificar programáticamente por qué se colaban falsos positivos en `is_ruido == False`. | Precisión muestral de solo **`60.0%` (`18 TP / 12 FP`)**. Se aislaron **5 puertas traseras (`FP_1` a `FP_5`)** que sumaban **6,225 FP (`16.66%`)**. |
+| **4. Extracción Secundaria Refinada (v2)** | `src/articulos/etl_categorizacion.py` *(v2)*<br>`src/articulos/models/categorizador.py`<br>`df_util_v2.parquet` | Corregir en origen el extractor de fragmentos (`process_text`) y endurecer las reglas de saliencia de entidad, rol de analista y salvoconducto macro. | Redujo el corpus útil a **27,217 noticias (`30.29%`)**, depurando de raíz **10,142 registros ruidosos** antes de salir del pipeline ETL. |
+| **5. EDA v2 y Verificación de Pureza (`TP` y `FN`)** | `zero_shot_clasiffication_eda copy.ipynb`<br>`zero_shot_clasiffication_FP_Analisis copy.ipynb` | Repetir el EDA y el análisis de cubetas sobre `df_util_v2.parquet` para verificar la ganancia en precisión y auditar posibles Falsos Negativos (`FN`). | La precisión directa sube al **`80.0%–83.3%`** (`25 TP / 5 FP`) y los errores `FP_1 + FP_2` caen un **`98.3%`** (de `4,195` a solo `71` casos). |
+
+---
+
+## 1. Fase 1: Extracción Primaria (Capa Bronze) y Naturaleza del Ruido de Origen
+
+En la **Extracción Primaria** (`src/articulos/etl_multisource.py`), el objetivo fue construir un corpus histórico completo (`2010–2023`) combinando las particiones crudas de HuggingFace para los 6 grandes bancos estadounidenses (`BAC`, `C`, `GS`, `JPM`, `MS`, `WFC`).
+
+Durante el EDA de la capa Bronze (`huggingface_2010_2023_EDA_v2.ipynb`) se detectaron **tres patologías estructurales propias de los agregadores financieros** que obligaron a diseñar una segunda fase de extracción semántica:
+
+1. **Contaminación Multi-Ticker (*Ticker Bleed*):** Un mismo artículo de mercado (p. ej. un resumen del S&P 500 o una nota sobre *Apple* o *Nvidia*) aparece replicado bajo el `ticker` de un banco simplemente porque la plataforma de origen etiquetó todas las acciones mencionadas al pie de la página o porque un analista del banco emitió un comentario sobre esa tercera empresa. Se crearon las variables `ticker_count` e `is_multisubject` (`ticker_count > 1`) para penalizar estos casos.
+2. **Noticias Huérfanas de Cuerpo (`23,010` registros, `25.61%` del total de `89,846`):** Más de una cuarta parte del corpus carece de cuerpo (`article` vacío o redundante con el titular), siendo marcada en el preprocesamiento con la etiqueta `(Titular directo sin cuerpo)`.
+   * De esas `23,010` noticias sin cuerpo, solo **`9,211` (`10.25%`)** mencionan realmente al banco en el titular (titulares *flash* legítimos de agencias como Reuters o Benzinga).
+   * Las restantes **`13,799` (`15.36%`)** no mencionan al banco ni en el titular ni tienen cuerpo (*huérfanas totales*).
+3. **Artículos Extensos Multi-Tópico:** En crónicas largas donde se habla de 10 o 15 empresas, pasar el texto completo a FinBERT diluía el sentimiento específico del banco. Por ello se implementó en `categorizador.py` una **Extracción Secundaria de Contexto (`process_text`)** capaz de recortar únicamente las oraciones centradas en los alias oficiales del banco (`ALIAS_BANCOS`).
+
+---
+
+## 2. Fase 2 y 3: Categorización Semántica v1, EDA v1 y Diagnóstico de las 5 "Puertas Traseras"
+
+En la **primera iteración del clasificador Zero-Shot (v1)** (`df_util_2010_2023.parquet`), el pipeline filtró las `89,846` noticias dejando **`37,359` noticias útiles (`41.58%`)** y **`52,487` de ruido (`58.42%`)**.
+
+### 2.1. Matriz de Auditoría Cualitativa en EDA v1 ($N = 60$, `df_util_2010_2023.parquet`)
+
+Al auditar manualmente una muestra estratificada (`random_state=42`) de **30 noticias útiles (`is_ruido == False`)** y **30 noticias de ruido (`is_ruido == True`)** en [`zero_shot_clasiffication_eda.ipynb`](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/notebooks/zero_shot_clasiffication_eda.ipynb), se observó que el descarte era muy limpio (`NPV = 83.3%`), pero **la clase útil sufría una infiltración del `40.0%` de Falsos Positivos (`PPV = 60.0%`)**:
+
+| Predicción del Clasificador v1 \ Realidad Manual | Real: Útil (Señal del Banco) | Real: Ruido (Terceros / Sin Contexto) | Total Muestra | Métrica Muestral v1 |
 | :--- | :---: | :---: | :---: | :---: |
-| **Predicho: SÍ Sirve (`is_ruido == False`)** | **TP = 18** | **FP = 12** | **30** (5 por banco) | **Precisión (PPV):** `60.0%` |
-| **Predicho: Ruido (`is_ruido == True`)** | **FN = 5** | **TN = 25** | **30** (5 por banco) | **Valor Predictivo Negativo (NPV):** `83.3%` |
+| **Predicho v1: SÍ Sirve (`is_ruido == False`)** | **TP = 18** | **FP = 12** | **30** (5 por banco) | **Precisión (PPV):** `60.0%` |
+| **Predicho v1: Ruido (`is_ruido == True`)** | **FN = 5** | **TN = 25** | **30** (5 por banco) | **Valor Predictivo Negativo (NPV):** `83.3%` |
 | **Total Real** | **23** | **37** | **60** | **Exactitud Global (Accuracy):** `71.7%` |
 
-* **Sensibilidad (Recall sobre señal útil):** `78.3%` ($18 / 23$)
-* **Especificidad (Tasa de rechazo de ruido real):** `67.6%` ($25 / 37$)
+### 2.2. Las 5 Puertas Traseras Detectadas en v1 (`zero_shot_clasiffication_FP_Analisis.ipynb`)
+
+Al analizar por qué se habían colado esos **12 Falsos Positivos** en la muestra v1 y medir su peso sobre las **37,359 noticias útiles** de `df_util_2010_2023.parquet`, se descubrieron **5 puertas traseras exactas** que sumaban **6,225 Falsos Positivos (`16.66%` del total útil v1)**:
+
+1. **`FP_1: Huérfana Sin Cuerpo ni Banco` (`2,165` noticias en v1 — `5.80%`):**
+   * *Causa en v1:* Existía una excepción para registros con `ticker_count == 1` que permitía aprobar noticias con `(Titular directo sin cuerpo)` aunque el titular no mencionara al banco (ej. *"Citi: Moody's Raises Outlook"* asignada a `BAC`, o *"Markets Reserve Judgement on Mixed Jobs Numbers"* asignada a `GS`).
+2. **`FP_2: Fallback Con Cuerpo pero Sin Banco` (`2,030` noticias en v1 — `5.43%`):**
+   * *Causa en v1:* Cuando el extractor secundario no encontraba al banco en ningún párrafo del cuerpo, hacía un *fallback* tomando los primeros 400 caracteres del artículo; si allí aparecía una palabra macro general (`economy`, `treasury`, `inflation`), el "salvoconducto macro" aprobaba la noticia aunque el banco no existiera en todo el texto.
+3. **`FP_3: Otro Banco en Titular / Cross-Bank Bleed` (`786` noticias en v1 — `2.10%`):**
+   * *Causa en v1:* Titulares protagonizados en exclusiva por otro banco competidor (ej. *"Citigroup Warns Bond Traders..."* en una fila de `JPM`) procedentes de boletines con titulares concatenados.
+4. **`FP_4: Banco como Casa de Análisis / Pronóstico Macro` (`980` noticias en v1 — `2.62%`):**
+   * *Causa en v1:* Artículos sobre terceras empresas (*Snap*, *Apple*, *Intel*) donde el banco solo emitía una recomendación (`"downgrade from Morgan Stanley"`) o un pronóstico macro de casa de estudios (`"Goldman cuts forecast for U.S. economic growth"`).
+5. **`FP_5: Plantillas Robotizadas 13F / ETF / Listas TV` (`264` noticias en v1 — `0.71%`):**
+   * *Causa en v1:* Notas generadas automáticamente sobre carteras de fondos pequeños (`"% of the total portfolio"`, `"13F filings"`) que el centroide `m&a` confundía con adquisiciones del banco, o listas televisivas sin cuerpo (`"Fast Money Picks"`).
 
 ---
 
-### 1.2. Evaluación Detallada de la Muestra Útil (`is_ruido == False`: 18 TP vs. 12 FP)
+## 3. Fase 4: Extracción Secundaria Refinada y Clasificador v2 (`df_util_v2.parquet`)
 
-| # | Fecha | Ticker | Categoría | Confianza | Contexto (`process_text`) | Titular (`title`) | Veredicto | Justificación Técnica |
-| :-: | :---: | :-: | :-: | :-: | :---: | :--- | :-: | :--- |
-| **0** | 2010-07-19 | `BAC` | `macro` | 36.79% | Sin cuerpo | *Citi: Moody's Raises Outlook to Stable* | ❌ **FP** | Habla exclusivamente de Citigroup (`C`); sin cuerpo ni mención a `BAC`. |
-| **1** | 2010-10-20 | `BAC` | `m&a` | 52.90% | Con cuerpo | *Hot Stocks: Regional Banks Slide* | ❌ **FP** | Habla de bancos regionales (Comerica y M&I); no menciona a `BAC`. |
-| **2** | 2011-01-03 | `BAC` | `m&a` | 45.02% | Con cuerpo | *Bank of America, Boeing, Borders in focus* | ⚠️ **FP** | Lista genérica de apertura de futuros sin hecho fundamental de `BAC`. |
-| **3** | 2015-04-15 | `BAC` | `m&a` | 47.85% | Sin cuerpo | *Fast Money Picks For April 15: Bank Of America, Exxon Mobil, Intel* | ⚠️ **FP** | Mención televisiva multi-ticker sin cuerpo ni contexto. |
-| **4** | 2016-03-20 | `BAC` | `m&a` | 42.02% | Sin cuerpo | *Bank of America Erroneously Declared Jim Chanos' $18M Mortgage Paid in Full* | ✅ **TP** | Evento operativo/hipotecario directo de `BAC`. |
-| **5** | 2017-05-12 | `C` | `legal` | 53.55% | Con cuerpo | *Is Bank of America Really the "Stingiest" Big Bank?* | ✅ **TP** | Comparativa directa del rendimiento de depósitos entre `BAC`, `JPM`, `WFC` y `C`. |
-| **6** | 2017-10-12 | `C` | `earnings` | 45.23% | Sin cuerpo | *Citi Reports Book Value Per Share of $78.81, Repurchased 81M Common Shares* | ✅ **TP** | Reporte contable y recompra de acciones de `C`. |
-| **7** | 2017-11-03 | `C` | `m&a` | 44.71% | Con cuerpo | *High Pointe Capital Management Llc Buys Progressive Corp...* | ❌ **FP** | Nota automática de cartera de un fondo (13F) donde `C` es una posición menor. |
-| **8** | 2018-06-20 | `C` | `legal` | 50.58% | Sin cuerpo | *'The auditor of Citi, Credit Suisse and Deutsche Bank was tipped off...'* | ✅ **TP** | Evento regulatorio/auditoría que involucra directamente a `C`. |
-| **9** | 2019-07-15 | `C` | `earnings` | 58.78% | Con cuerpo | *Citigroup Kicks Off Bank Earnings Season With a Strong Result* | ✅ **TP** | Resultados trimestrales directos de `C`. |
-| **10** | 2010-02-05 | `GS` | `macro` | 37.82% | Sin cuerpo | *Markets Reserve Judgement on Mixed Jobs Numbers* | ❌ **FP** | Noticia macro genérica sin cuerpo ni mención a `GS`. |
-| **11** | 2016-03-16 | `GS` | `m&a` | 53.83% | Con cuerpo | *Why Goldman is Set to Acquire Startup Firm Honest Dollar* | ✅ **TP** | Operación real de M&A ejecutada por `GS`. |
-| **12** | 2020-07-13 | `GS` | `earnings` | 51.44% | Con cuerpo | *Earnings Season Kicks Off Amid Pandemic as Companies Pull Guidance* | ✅ **TP** | Previa directa del inicio de resultados trimestrales de `GS` y `JPM`. |
-| **13** | 2021-04-06 | `GS` | `earnings` | 40.59% | Con cuerpo | *Goldman Sachs Group's Preferred Stock, Series K Shares Cross 5.5% Yield Mark* | ✅ **TP** | Cotización y rendimiento por dividendo de acciones preferentes de `GS`. |
-| **14** | 2021-10-10 | `GS` | `macro` | 52.90% | Con cuerpo | *Goldman cuts forecast for U.S. economic growth in 2021 and 2022* | ⚠️ **FP** | Rol de `GS` como casa de análisis macroeconómico, no evento corporativo propio. |
-| **15** | 2015-08-25 | `JPM` | `m&a` | 34.72% | Sin cuerpo | *J.P. Morgan Chase upgraded to buy from outperform at CLSA Americas* | ✅ **TP** | Mejora de recomendación bursátil directamente sobre la acción de `JPM`. |
-| **16** | 2018-11-14 | `JPM` | `legal` | 48.69% | Sin cuerpo | *Banks sink after Waters warns that bank reg rollbacks will end* | ✅ **TP** | Impacto regulatorio directo sobre la gran banca estadounidense. |
-| **17** | 2019-03-19 | `JPM` | `m&a` | 38.97% | Sin cuerpo | *JPMorgan Offers Checkless Accounts for Low-Income Customers* | ✅ **TP** | Lanzamiento comercial de producto bancario de `JPM`. |
-| **18** | 2019-04-12 | `JPM` | `earnings` | 52.62% | Sin cuerpo | *J.P. Morgan Chase Q1 fixed income market revenue down 8%, equity markets...* | ✅ **TP** | Cifras directas de ingresos del 1T de `JPM`. |
-| **19** | 2023-06-12 | `JPM` | `macro` | 59.49% | Con cuerpo | *Citigroup Warns Bond Traders Are Misreading Inflation Ahead of CPI* | ❌ **FP** | Titular de Citigroup con cuerpo tipo boletín de titulares concatenados. |
-| **20** | 2011-01-28 | `MS` | `macro` | 45.47% | Sin cuerpo | *A much better bet on inflation than gold* | ❌ **FP** | Titular de opinión macro sin cuerpo ni mención a `MS`. |
-| **21** | 2013-11-26 | `MS` | `legal` | 44.58% | Sin cuerpo | *Reuters Reports DOJ Investigating Morgan Stanley for Hiring Practices in China* | ✅ **TP** | Investigación del Departamento de Justicia (DOJ) sobre `MS`. |
-| **22** | 2017-11-09 | `MS` | `earnings` | 39.86% | Con cuerpo | *Why Snap Inc Stock Fell Thursday* | ❌ **FP** | Rol de `MS` como analista emitiendo un *downgrade* tras los resultados de Snap Inc. |
-| **23** | 2021-07-12 | `MS` | `earnings` | 45.03% | Con cuerpo | *1 Value Stock and 1 Growth Stock I'm Watching Now* | ✅ **TP** | Analiza la duplicación del dividendo de `MS` tras aprobar los *stress tests* de la Fed. |
-| **24** | 2022-08-29 | `MS` | `legal` | 44.24% | Con cuerpo | *S.Korea inspecting stock short-selling, starting with Morgan Stanley* | ✅ **TP** | Inspección regulatoria directa a la filial de `MS` en Corea del Sur. |
-| **25** | 2011-04-20 | `WFC` | `m&a` | 46.17% | Con cuerpo | *Financials rise but Wells Fargo misses the party* | ✅ **TP** | Caída del 3.5% de `WFC` tras presentar ingresos del 1T inferiores a lo esperado. |
-| **26** | 2016-02-13 | `WFC` | `macro` | 39.61% | Con cuerpo | *Warren Buffett: 'I Am Not Worried' About Market* | ✅ **TP** | Desempeño de `WFC` (-13.3%) dentro de las principales posiciones de Berkshire Hathaway. |
-| **27** | 2017-06-30 | `WFC` | `m&a` | 42.25% | Con cuerpo | *Citigroup (C) Scales 52-Week High on Investors' Optimism* | ✅ **TP** | Aprobación del plan de capital de `WFC`, `JPM` y `BAC` por la Reserva Federal. |
-| **28** | 2017-12-21 | `WFC` | `m&a` | 36.18% | Sin cuerpo | *Buckingham Upgrades Wells Fargo to Buy* | ✅ **TP** | Upgrade de recomendación bursátil directamente sobre `WFC`. |
-| **29** | 2022-04-18 | `WFC` | `macro` | 46.04% | Con cuerpo | *Stocks edge lower at the close, 10-year Treasury yield hits highest level...* | ❌ **FP** | Resumen genérico de cierre de mercado (viajes y semiconductores) sin mención a `WFC`. |
+A partir de los hallazgos de la auditoría v1, se modificó el script de extracción secundaria y categorización ([`src/articulos/etl_categorizacion.py`](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/articulos/etl_categorizacion.py) y [`src/articulos/models/categorizador.py`](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/articulos/models/categorizador.py)) y se regeneró el dataset Silver, publicando el nuevo subconjunto útil en **`processed/huggingface/df_util/df_util_v2.parquet`**.
+
+### 3.1. Comparativa Macro del Dataset: Versión v1 vs. Versión v2 (`2010–2023`)
+
+| Indicador Global (`N = 89,846`) | Versión v1 (`df_util_2010_2023.parquet`) | Versión v2 (`df_util_v2.parquet`) | Variación Neta (v1 $\rightarrow$ v2) |
+| :--- | :---: | :---: | :---: |
+| **✔ Noticias que SIRVEN (`is_ruido == False`)** | **37,359** (`41.58%`) | **27,217** (`30.29%`) | **-10,142 noticias** (`-27.15%` de volumen bruto) |
+| **✖ Noticias DESCARTADAS (`is_ruido == True`)** | **52,487** (`58.42%`) | **62,629** (`69.71%`) | **+10,142 noticias** enviadas a ruido en origen |
+
+#### Comparativa de Retención por Entidad Bancaria (v1 vs. v2)
+
+| Banco (`ticker`) | Total Noticias Bronze | Útiles v1 (`df_util`) | `% Útil v1` | Útiles v2 (`df_util_v2`) | `% Útil v2` | Confianza Media Útil v2 | Ruido Depurado Adicional (v1 $\rightarrow$ v2) |
+| :-: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`WFC`** | 16,075 | 7,464 | 46.43% | **5,349** | **33.28%** | 48.60% | -2,115 filas |
+| **`MS`** | 16,341 | 7,084 | 43.35% | **5,289** | **32.37%** | 46.90% | -1,795 filas |
+| **`GS`** | 18,321 | 6,708 | 36.61% | **5,113** | **27.91%** | 48.25% | -1,595 filas |
+| **`JPM`** | 18,953 | 6,710 | 35.40% | **4,362** | **23.01%** | 47.28% | -2,348 filas |
+| **`C`** | 8,647 | 5,098 | 58.96% | **4,251** | **49.16%** | 49.91% | -847 filas |
+| **`BAC`** | 11,509 | 4,295 | 37.32% | **2,853** | **24.79%** | 47.89% | -1,442 filas |
+| **TOTAL** | **89,846** | **37,359** | **41.58%** | **27,217** | **30.29%** | **48.12%** | **-10,142 filas** |
+
+#### Distribución de Categorías Temáticas dentro de `df_util_v2.parquet` (`27,217` noticias)
+* **`earnings`:** `9,923` noticias (`36.46%`) — Confianza media: `50.85%`
+* **`m&a`:** `9,637` noticias (`35.41%`) — Confianza media: `45.55%`
+* **`macro`:** `3,011` noticias (`11.06%`) — Confianza media: `45.32%`
+* **`legal`:** `2,991` noticias (`10.99%`) — Confianza media: `50.31%`
+* **`governance`:** `840` noticias (`3.09%`) — Confianza media: `47.55%`
+* **`credit`:** `815` noticias (`2.99%`) — Confianza media: `48.28%`
 
 ---
 
-### 1.3. Evaluación Detallada de la Muestra Descartada (`is_ruido == True`: 25 TN vs. 5 FN)
+## 4. Fase 5: EDA v2 y Verificación Rigurosa de `TP`, `FP`, `TN` y `FN`
 
-* **✅ 25 Verdaderos Negativos (TN — `83.3%` de pureza en el descarte):**
-  * **Descarte correcto del banco actuando como analista de terceros:** Filas **2** (`BAC`: *Credit Suisse opina sobre JPM*) y **19** (`JPM`: *el analista de JPM Stephen Tusa opina sobre General Electric*, descartado con `31.63%`).
-  * **Descarte correcto de noticias de empresas ajenas sin relación con el banco:** Filas **3** (`BAC` - Apple), **13** (`GS` - Quit Genius / OMS), **16** (`JPM` - Kohl's), **17** (`JPM` - Apollo Group), **18** (`JPM` - artículo sobre BAC), **21** (`MS` - artículo sobre JPM), **24** (`MS` - dividendo de MarketAxess), **26** (`WFC` - dividendo de Itaú Unibanco), **27** (`WFC` - IPO de Vroom) y **28** (`WFC` - RedHat adquiere StackRox).
-  * **Descarte correcto de alertas automáticas de ETFs y resúmenes genéricos:** Filas **0, 1, 4** (`BAC`), **7, 9** (`C`), **10, 11, 12** (`GS`), **15** (`JPM`), **20, 23** (`MS`), **25, 29** (`WFC`).
+Al repetir el experimento de auditoría muestral ($N = 60$, `random_state = 42`: 30 noticias útiles y 30 de ruido) en [`zero_shot_clasiffication_eda copy.ipynb`](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/notebooks/zero_shot_clasiffication_eda%20copy.ipynb) y cruzarlo con la radiografía completa de [`zero_shot_clasiffication_FP_Analisis copy.ipynb`](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/notebooks/zero_shot_clasiffication_FP_Analisis%20copy.ipynb), se confirma una transformación radical en la estructura y pureza de los datos.
 
-* **⚠️ 5 Falsos Negativos (FN — `16.7%` de pérdida por umbral de confianza `< 35%` o titulares compuestos):**
-  1. **Fila 5 (`C`, 2010-04-26, `32.20%`):** *"Citi slips as Treasury announces sale"* (venta de 1.500 millones de acciones de Citi por el Tesoro de EE. UU.; cayó justo por debajo del umbral del `35%`).
-  2. **Fila 6 (`C`, 2011-11-28, `29.93%`):** *"Citigroup shares add 5.1% in preopen"* (titular corto sin cuerpo con confianza `< 35%`).
-  3. **Fila 8 (`C`, 2018-05-30, `33.84%`):** *"Italy Turmoil Puts These 6 Bank Stocks at Risk — Turmoil in Italy: Citigroup (C)"* (confianza `< 35%`).
-  4. **Fila 14 (`GS`, 2022-11-16, `31.36%`):** *"Dell reaches $1 billion settlement over disputed 2018 stock swap"* (resuelve demandas contra `GS` como asesor de la operación; confianza `< 35%`).
-  5. **Fila 22 (`MS`, 2015-07-20, `47.27%` en `ruido`):** *"Mid-Morning Market Update: Markets Mostly Flat; Morgan Stanley Beats Q2 Views"* (el encabezado *Mid-Morning Market Update* arrastró la predicción hacia `ruido` pese a que la segunda mitad del titular reportaba resultados de `MS`).
+### 4.1. Evolución del Anclaje de la Entidad Bancaria: v1 vs. v2
+
+El cambio en el script de extracción erradicó casi al 100% las dos anomalías más graves del dataset v1 (los cuadrantes 5 y 6, donde el banco no aparecía ni en el titular ni en el fragmento):
+
+| Tipo de Anclaje de Entidad en `df_util` | Noticias en v1 (`37,359`) | `% en v1` | Noticias en v2 (`27,217`) | `% en v2` | Diagnóstico del Cambio (v1 $\rightarrow$ v2) |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **1. Anclaje Doble (Banco en Titular y Cuerpo)** | 7,756 | 20.76% | **6,841** | **25.14%** | Sube `+4.38 pp` su peso relativo en el corpus útil. |
+| **2. Titular Flash Válido (Banco en Titular, Sin Cuerpo)** | 7,085 | 18.96% | **6,944** | **25.51%** | Se conserva el `98.0%` de los titulares flash legítimos. |
+| **3. Banco en Titular, Cuerpo por Fallback** | 848 | 2.27% | **832** | **3.06%** | Se mantiene estable (el titular garantiza el vínculo con el banco). |
+| **4. Solo en Cuerpo (Titular NO menciona al banco)** | 14,217 | 38.06% | **12,050** | **44.27%** | El extractor secundario v2 localiza con mucha mayor precisión el párrafo del banco. |
+| **5. Huérfano Sin Cuerpo (NI en Titular NI Cuerpo) `[FP]`** | **3,518** | **9.42%** | **142** | **0.52%** | **Reducción del `-96.0%`** (`-3,376` falsos positivos huérfanos eliminados). |
+| **6. Fallback Sin Banco (NI en Titular NI Cuerpo) `[FP]`** | **3,935** | **10.53%** | **408** | **1.50%** | **Reducción del `-89.6%`** (`-3,527` *fallbacks* sin mención al banco eliminados). |
+
+> 📌 **En `df_util_v2.parquet`, el `97.98%` de todas las noticias útiles (`26,667` de `27,217`) contienen explícitamente el nombre o alias del banco en el titular y/o en el fragmento extraído `process_text`** (frente a solo el `80.05%` en v1).
 
 ---
 
-## 2. Cuantificación del Origen de los Falsos Positivos (FP) en el Dataset Completo ($N = 89,846$)
+### 4.2. Matriz de Auditoría Cualitativa en EDA v2 ($N = 60$, `df_util_v2.parquet`)
 
-La auditoría cualitativa reveló que la mayoría de los **Falsos Positivos (`FP`)** provienen de dos patrones estructurales muy concretos:
-1. **Foco FP #1 (Titulares huérfanos sin cuerpo):** Registros con `process_text == "(Titular directo sin cuerpo)"` donde ni el cuerpo original ni el titular mencionan realmente al banco asignado en la columna `ticker` del dataset bruto.
-2. **Foco FP #2 (Rol de casa de análisis sobre terceros):** Noticias con cuerpo donde el titular habla de otra compañía (sin mencionar al banco) y el banco aparece únicamente en el cuerpo con jerga de analista (`upgrades`, `downgrades`, `price target`, `analyst`, `forecasts`, `top picks`, etc.).
+| Predicción del Clasificador v2 \ Realidad Manual | Real: Útil (Señal del Banco) | Real: Ruido (Terceros / Sin Contexto) | Total Muestra | Métrica Muestral v2 *(vs. v1)* |
+| :--- | :---: | :---: | :---: | :---: |
+| **Predicho v2: SÍ Sirve (`is_ruido == False`)** | **TP = 24 a 25** | **FP = 5 a 6** | **30** (5 por banco) | **Precisión (PPV):** `80.0% – 83.3%` *(v1: 60.0%)* |
+| **Predicho v2: Ruido (`is_ruido == True`)** | **FN = 2** *(4 laxos)* | **TN = 28** *(26 laxos)* | **30** (5 por banco) | **Valor Predictivo Negativo (NPV):** `86.7% – 93.3%` *(v1: 83.3%)* |
+| **Total Real (Criterio Estricto FinBERT)** | **26 – 27** | **33 – 34** | **60** | **Exactitud Global (Accuracy):** `85.0% – 88.3%` *(v1: 71.7%)* |
 
-Al medir la incidencia exacta de ambos fenómenos sobre los **89,846 registros** del periodo `2010–2023`, se obtienen los siguientes resultados:
+---
 
-### 2.1. Volumen de `(Titular directo sin cuerpo)` en el Dataset Completo (`N = 89,846`)
+### 4.3. Verificación Estricta de los `TP` (Verdaderos Positivos)
 
-| Categoría de Registro | Volumen (Noticias) | % sobre el Total (`89,846`) | Destino en el Clasificador Actual |
+1. **Sobre la muestra de `df_util_v2` sin post-filtrado adicional ([`zero_shot_clasiffication_eda copy.ipynb`](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/notebooks/zero_shot_clasiffication_eda%20copy.ipynb#L1809-L1905)):**
+   * **23 de las 30 noticias (`76.7%`) son `TP` rotundos e indiscutibles:** reportan directamente batidas o caídas de beneficios trimestrales (`BAC`, `C`, `GS`, `MS`, `WFC`), demandas judiciales de fiscales o reguladores (`BAC`, `MS`, `WFC`), pruebas de estrés de la Reserva Federal (`C`, `MS`), *joint ventures* y desinversiones reales (`C` vendiendo *Bridge built by Citi*, `GS` creando una JV en China) o remuneración de directivos (`JPM` subiendo el sueldo a Jamie Dimon).
+   * **2 casos son `TP` fronterizos (*borderline*):**
+     * **Fila 7 (`C` — *"Two big U.S. banks offer glum outlook for coronavirus recession"*):** Válida como previa porque el fragmento confirma que Citigroup presenta resultados al día siguiente, aunque el tono pesimista del titular venía de los dos bancos que habían reportado la víspera (`JPM` y `WFC`).
+     * **Fila 20 (`MS` — *"Financial Sector Ended In Slightly Positive Frame, With C Feeling The Heat Of Treasury Selloff (XLF, ..., C, ..., MS)"*):** Titular sin cuerpo cuyo sujeto principal es Citigroup (`C`), mientras que `MS` solo figura en la lista de tickers entre paréntesis. Bajo criterio estricto de polaridad por entidad, debe contarse más como un `FP` de contaminación cruzada que como un `TP` de `MS` (dejando **24 TP puros y 6 FP = `80.0%` de precisión estricta**).
+   * **Los 5 `FP` claros de la muestra v2 son:** recomendaciones de analistas sobre terceros (Fila 4 de `BAC` sobre *Nvidia* y Fila 17 de `JPM` sobre *Intel*), una plantilla 13F sin cuerpo (Fila 18 de `JPM`), un cierre general de mercado sin mención al banco (Fila 15 de `JPM`) y una mención tangencial como *bookrunner* de bonos de Bayer (Fila 28 de `WFC`).
+
+2. **Sobre la muestra post-filtrado del Núcleo Limpio ([`zero_shot_clasiffication_FP_Analisis copy.ipynb`](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/notebooks/zero_shot_clasiffication_FP_Analisis%20copy.ipynb#L2093-L2220), Bloque 6):**
+   * **29 de las 30 noticias (`96.7%`) son `TP` reales.**
+   * Únicamente se infiltró **1 Falso Positivo (`3.3%`)**: la **Fila 19 (`JPM`, *"The Reliable S&P 500 Dividend Payers in a Recession"*)**, donde `JPM` actúa como casa de análisis elaborando un ranking de dividendos del S&P 500 (*"J.P. Morgan ranked the most sustainable S&P 500 dividend payers..."*).
+
+---
+
+### 4.4. Verificación Estricta de los `FN` (Falsos Negativos)
+
+El análisis de los **Falsos Negativos (`FN` — noticias útiles que perdimos por clasificarlas como ruido)** arroja dos conclusiones fundamentales:
+
+#### A. En el descarte del clasificador v2 (`is_ruido == True`, [`zero_shot_clasiffication_eda copy.ipynb`](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/notebooks/zero_shot_clasiffication_eda%20copy.ipynb#L2256-L2350))
+De las 30 noticias descartadas como ruido en la muestra, una revisión inicial marcó 4 posibles `FN` (Filas 6, 7, 25 y 28). Sin embargo, al verificar su contenido real de cara al entrenamiento/inferencia con **FinBERT**:
+* **Solo 2 de las 30 (`6.7%`) son `FN` verdaderos:**
+  1. **Fila 28 (`WFC`, 2020-07-14) — `FN` real de alto impacto:** El fragmento dice *"Wells Fargo & Co WFC.N tumbled after booking a quarterly loss for the first time since the 2008 financial crisis"*. Es un evento fundamental crítico que fue descartado porque el titular del artículo era completamente genérico (*"Wall Street ends higher, led by energy and materials"*) y su confianza (`35.99%`) no superó el umbral exigido a noticias multi-sujeto.
+  2. **Fila 7 (`C`, 2017-10-12) — `FN` leve:** *"A Peek Into The Markets: U.S. Stock Futures Edge Lower; Citigroup Earnings In Focus"*. No tenía cuerpo y el prefijo *"A Peek Into The Markets"* decantó la similitud hacia el centroide `ruido` (`42.75%`).
+* **Los otros 2 casos (Filas 6 y 25) son en realidad Verdaderos Negativos (`TN`) bien descartados:**
+  * **Fila 6 (`C`, 2015-03-10):** El fragmento extraído es únicamente una pregunta retórica sin ningún dato financiero (*"Why has Citigroup's share price done so well lately?"*).
+  * **Fila 25 (`WFC`, 2015-12-07):** *"Wells Fargo & Co.'s Secret to Stellar Growth"* es un artículo histórico sobre la gestión del ex-CEO Dick Kovacevich durante la crisis de 2008–2009, sin relación con eventos de mercado de diciembre de 2015.
+
+#### B. Hallazgo Crítico en el Post-Filtrado (`zero_shot_clasiffication_FP_Analisis copy.ipynb`): Las reglas regex `FP_3` y `FP_4` generan Falsos Negativos (`FN`) sobre `df_util_v2`
+
+Al ejecutar las 5 cubetas de post-filtrado sobre las `27,217` noticias de `df_util_v2.parquet` ([Bloques 3 y 4](file:///C:/Users/felip/OneDrive/Felipe/Master/TFM/TFM-Master/src/notebooks/zero_shot_clasiffication_FP_Analisis%20copy.ipynb#L477-L1510)), se observa un fenómeno clave:
+
+| Cubeta de Auditoría en `zero_shot_clasiffication_FP_Analisis` | Conteo en v1 (`37,359`) | Conteo en v2 (`27,217`) | ¿Qué contiene realmente la cubeta en v2 tras inspeccionar el Bloque 4? |
 | :--- | :---: | :---: | :--- |
-| **Total con `(Titular directo sin cuerpo)`** | **23,010** | **25.61%** | `10,603` pasaron como útiles (`46.1%`) y `12,407` fueron a ruido (`53.9%`). |
-| ├── **Con mención explícita del banco en el `title`** *(Titulares legítimos tipo flash)* | **9,211** | **10.25%** | `7,085` pasaron como útiles (`76.9%`) y `2,126` fueron a ruido (`23.1%`, por confianza `< 35%`). |
-| └── **SIN mención del banco en el `title` ni cuerpo** *(Huérfanas totales / FP en potencia)* | **13,799** | **15.36%** | `10,281` se filtraron bien como ruido (`74.5%`), pero **`3,518` se colaron como útiles (`FP`)**. |
+| **`FP_1: Huérfana Sin Cuerpo ni Banco`** | 2,165 (`5.80%`) | **14 (`0.05%`)** | **100% Ruido residual** (prácticamente extinguido por el nuevo script v2). |
+| **`FP_2: Fallback Con Cuerpo pero Sin Banco`** | 2,030 (`5.43%`) | **57 (`0.21%`)** | **100% Ruido / macro genérico sin mención al banco** (reducido un `97.2%` en v2). |
+| **`FP_5: Plantilla 13F / ETF / Lista TV`** | 264 (`0.71%`) | **105 (`0.39%`)** | **100% Ruido robotizado** (notas de fondos 13F como *Appaloosa*, *Soros Fund*, *Holdings Channel*). |
+| **`FP_4: Banco como Analista / Pronóstico`** | 980 (`2.62%`) | **818 (`3.01%`)** | ⚠️ **Falsos Descartes (`FN`):** En la muestra del Bloque 4, **5 de las 5 filas (`100%`) son `TP` legítimos del banco** mal etiquetados como `FP_4`. |
+| **`FP_3: Otro Banco en Titular (Cross-Bleed)`** | 786 (`2.10%`) | **672 (`2.47%`)** | ⚠️ **Falsos Descartes (`FN`):** En la muestra del Bloque 4, **4 de las 5 filas (`80%`) son `TP` legítimos del banco** mal etiquetados como `FP_3`. |
+| **`TP: Núcleo Limpio`** | 31,134 (`83.34%`) | **25,551 (`93.88%`)** | **96.7% de pureza (`29 TP / 30`)** y **0 años con 0 noticias** en los 6 bancos (`2010–2023`). |
+
+* **¿Por qué `FP_4` y `FP_3` producen Falsos Negativos (`FN`) al aplicarlos sobre `df_util_v2`?**
+  1. **En `FP_4`:** Como el nuevo extractor secundario v2 ahora sí aisla con éxito el párrafo exacto del banco dentro de crónicas sectoriales (por ejemplo, Filas 0, 2 y 4 de `WFC`: *"Wells Fargo & Company's WFC third-quarter 2023 adjusted earnings per share of $1.39 outpaced the Zacks Consensus **Estimate** of $1.25"*, o Fila 3 de `GS`: *"Shares of Goldman Sachs GS.N rose about 1% after Barclays **upgraded** its ratings"*), el texto contiene palabras como `Estimate`, `analysts' expectations` o `upgraded`. La regla regex de `FP_4` interpreta erróneamente que el banco actúa como analista de un tercero, cuando en realidad **el banco es el sujeto cuyos resultados baten las estimaciones de los analistas o cuya acción recibe un *upgrade***.
+  2. **En `FP_3`:** Aunque el titular mencione a otro banco en primer lugar (ej. *"Wells Fargo CEO Scharf's pay drops nearly 12% in 2020"*), el fragmento extraído por v2 para `GS` recoge directamente el hecho corporativo de Goldman Sachs (*"The fall in Scharf's pay compares with a 36% drop in Goldman Sachs Chief Executive David Solomon's salary"*). Eliminarlo supondría perder señal real (`FN`).
 
 ---
 
-### 2.2. Impacto dentro de las Noticias que SÍ Sirven (`is_ruido == False`, `N = 37,359`)
+## 5. Conclusiones Ejecutivas y Recomendación Final para la Fase FinBERT
 
-Dentro de las **37,359 noticias útiles** retenidas en la capa Silver:
-
-1. **Desglose de las 10,603 noticias sin cuerpo (`28.38%` de las útiles):**
-   * ✅ **7,085 noticias (`18.96%` de las útiles):** Son titulares directos sin cuerpo que **SÍ mencionan explícitamente al banco** en el titular (señal válida de titulares financieros tipo Reuters/Benzinga).
-   * ❌ **3,518 noticias (`9.42%` de las útiles — Foco FP #1):** Son **Falsos Positivos huérfanos puros**; no tienen cuerpo extraído y **tampoco mencionan al banco ni a sus alias en el titular**.
-2. **Desglose de las 26,756 noticias con cuerpo (`71.62%` de las útiles):**
-   * ⚠️ **2,841 noticias (`7.60%` de las útiles — Foco FP #2):** El titular **no menciona al banco** y el fragmento extraído contiene patrones léxicos de recomendación o análisis sobre terceros.
-
-> 📌 **Síntesis de Magnitud Global:** Entre ambos focos (`3,518` titulares huérfanos sin banco + `2,841` notas de analista sobre terceros) suman **6,359 registros**, equivalentes al **17.02% de las noticias útiles (`37,359`)**. Su depuración deja un núcleo de **31,000 noticias de alta pureza (`83.0%`)**.
-
----
-
-### 2.3. Distribución por Entidad Bancaria dentro de las Noticias Útiles (`is_ruido == False`)
-
-El comportamiento presenta una asimetría clara por entidad:
-* **`JPM`, `MS` y `BAC`** concentran el **82.1%** de todos los titulares huérfanos sin cuerpo (`FP #1`).
-* **`C` y `GS`** apenas presentan titulares huérfanos (`0.0%` y `2.5%`), pero registran la mayor proporción relativa de menciones en rol de casa de análisis (`12.3%` y `8.5%`).
-
-| Banco (`ticker`) | Total Útiles (`is_ruido=False`) | Total `(Titular sin cuerpo)` | % Sin Cuerpo | ✅ Sin Cuerpo pero **CON** Banco en `title` (Válidas) | ❌ **FP #1:** Sin Cuerpo y **SIN** Banco en `title` (Huérfanas) | % FP #1 (Huérfanas) | ⚠️ **FP #2:** Con Cuerpo, Sin Banco en `title` + Jerga Analista | % FP #2 (Analista) |
-| :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| **`BAC`** | 4,295 | 2,006 | 46.7% | 1,300 | **706** | **16.4%** | 248 | 5.8% |
-| **`C`** | 5,098 | 607 | 11.9% | 607 | **0** | **0.0%** | 629 | **12.3%** |
-| **`GS`** | 6,708 | 455 | 6.8% | 285 | **170** | **2.5%** | 573 | **8.5%** |
-| **`JPM`** | 6,710 | 2,720 | 40.5% | 1,615 | **1,105** | **16.5%** | 408 | 6.1% |
-| **`MS`** | 7,084 | 3,208 | 45.3% | 2,131 | **1,077** | **15.2%** | 433 | 6.1% |
-| **`WFC`** | 7,464 | 1,607 | 21.5% | 1,147 | **460** | **6.2%** | 550 | 7.4% |
-| **TOTAL** | **37,359** | **10,603** | **28.4%** | **7,085** | **3,518** | **9.4%** | **2,841** | **7.6%** |
-
----
-
-## 3. Diagnóstico de las "Puertas Traseras" del Clasificador Actual y Estrategias para Reducir el % de FP
-
-Al cruzar los **12 Falsos Positivos (`FP`)** de la muestra con la lógica actual del clasificador, se identifican **5 causas exactas (puertas traseras lógicas)** por las que se cuela el ruido. A continuación se detalla cada causa, qué filas de la auditoría explica, qué volumen representa en el dataset y cómo pulirla conceptualmente:
-
----
-
-### Estrategia 1: Cerrar la "Puerta Trasera de Rescate" en Noticias Sin Cuerpo y Sin Banco (`Elimina 3,518 FP = -9.42% directo`)
-* **¿Qué ocurre hoy?**  
-  Actualmente existe una regla de excepción pensada para rescatar titulares cortos de un solo ticker (`ticker_count == 1`): si una noticia no tiene cuerpo y no menciona al banco ni en el titular ni en el texto, aun así se aprueba como útil si supera el `35%` de confianza en una categoría financiera o si cae en `macro` (`> 30%`).
-* **¿Qué FP provocó en la muestra?**  
-  * **Fila 0 (`BAC`):** *"Citi: Moody's Raises Outlook to Stable"* (el dataset original la etiquetó erróneamente en `BAC`; como no tenía cuerpo y hablaba de un rating bancario, pasó limpia para `BAC` cuando era de `Citigroup`).
-  * **Fila 10 (`GS`):** *"Markets Reserve Judgement on Mixed Jobs Numbers"* (titular macro sin cuerpo ni mención a `GS`).
-  * **Fila 20 (`MS`):** *"A much better bet on inflation than gold"* (titular de opinión sobre inflación/oro sin cuerpo ni mención a `MS`).
-* **¿Cómo pulirlo?**  
-  **Regla de Anclaje Obligatorio en Titulares Huérfanos:** Si una noticia no tiene cuerpo (`(Titular directo sin cuerpo)`), **exigir sin excepciones que el titular mencione al banco (o a alguno de sus alias)**, o bien que el titular contenga un término explícito de banca sistémica (`Big Banks`, `Wall Street Banks`, `US Banks`, `Stress Test`). Si no menciona ni al banco ni a la banca en su conjunto, es ruido automático.
-
----
-
-### Estrategia 2: Eliminar el "Salvoconducto Macro" cuando el Cuerpo NO Menciona al Banco
-* **¿Qué ocurre hoy?**  
-  Cuando un artículo sí tiene cuerpo pero el buscador de fragmentos **no encuentra al banco en ningún párrafo**, el sistema hace un *fallback* tomando los primeros 400 caracteres del artículo. Si en esos 400 caracteres o en el titular aparece cualquier palabra general como `economy`, `treasury`, `inflation` o `financial sector`, el clasificador activa la bandera `es_macro` y **deja pasar la noticia aunque el banco del `ticker` no aparezca en todo el artículo**.
-* **¿Qué FP provocó en la muestra?**  
-  * **Fila 1 (`BAC`):** *"Hot Stocks: Regional Banks Slide"* (el cuerpo habla de Comerica y Marshall & Ilsley; `BAC` no aparece, pero como dice *"financial sector"* y *"economy"*, se activó el salvoconducto macro).
-  * **Fila 2 (`BAC`):** *"Bank of America, Boeing, Borders in focus"* (el cuerpo solo habla de futuros de EE. UU. y *"U.S. growth"* sin mencionar a `BAC`).
-  * **Fila 29 (`WFC`):** *"Stocks edge lower at the close, 10-year Treasury yield hits highest level since 2018"* (el cuerpo habla de viajes y semiconductores; `WFC` no aparece jamás, pero la palabra *"Treasury"* en el titular le dio pase libre).
-* **¿Cómo pulirlo?**  
-  **Condicionar la categoría `Macro` a presencia real o impacto bancario explícito:** Una noticia con cuerpo donde el banco **no es mencionado en todo el texto** no puede aprobarse solo por contener la palabra `Treasury`, `economy` o `inflation`. Para aprobar una noticia macro sin mención directa del banco en el cuerpo, el titular o el fragmento debe mencionar explícitamente al **sector bancario o a la Reserva Federal regulando bancos** (ej. `bank stocks`, `banking sector`, `Fed stress test`, `capital requirements`), no simples cierres generales del S&P 500 o del bono a 10 años.
-
----
-
-### Estrategia 3: Regla de "Exclusión por Protagonismo de Otro Banco Competidor" (*Cross-Bank Bleed*)
-* **¿Qué ocurre hoy?**  
-  A veces el titular nombra explícitamente a **un único banco competidor** (por ejemplo, *"Citi: ..."* o *"Citigroup Warns..."*), pero la fila pertenece a `BAC` o `JPM` porque en algún lugar del artículo original (o en un boletín de titulares concatenados) aparecía el nombre del otro banco.
-* **¿Qué FP provocó en la muestra?**  
-  * **Fila 0 (`BAC`):** *"Citi: Moody's Raises Outlook to Stable"*.
-  * **Fila 19 (`JPM`):** *"Citigroup Warns Bond Traders Are Misreading Inflation Ahead of CPI"* (cuerpo compuesto por titulares pegados sin separación).
-* **¿Cómo pulirlo?**  
-  **Filtro de Sujeto Competidor en Titular:** Si el titular menciona explícitamente a **uno solo** de los otros 5 bancos del *US Big 6* (ej. menciona a `Citigroup` pero **no** menciona a `JPM` ni palabras colectivas como `Big Banks`, `peers`, `rivals`, `along with`), y en el fragmento extraído el banco objetivo (`JPM`) no tiene ningún verbo de acción corporativa propia, debe descartarse como contaminación cruzada (*ticker bleed*).  
-  *(Nota: Esto respeta casos legítimos como la **Fila 5** —"Is Bank of America Really the Stingiest Big Bank?"— o la **Fila 27** —"Citigroup Scales 52-Week High... Other 33 big banks including JPM, BAC and WFC received approval"— porque ahí el fragmento sí compara explícitamente métricas o aprobaciones de capital de los demás bancos).*
-
----
-
-### Estrategia 4: Ampliar la Detección de "Banco como Casa de Análisis / Pronosticador" (`Mitiga hasta 2,841 FP = -7.60%`)
-* **¿Qué ocurre hoy?**  
-  El detector actual de rol de analista es muy rígido: solo salta si encuentra exactamente las palabras `"{banco} analyst"`, `"analyst at {banco}"`, `"{banco}'s analyst"` o `"{banco} reiterated"`.
-* **¿Qué FP provocó en la muestra?**  
-  * **Fila 22 (`MS`):** *"Why Snap Inc Stock Fell Thursday — ...an analyst downgrade **from** Morgan Stanley following the earnings release"*. Como decía *"downgrade from Morgan Stanley"* en vez de *"analyst at Morgan Stanley"*, burló la regla y se clasificó como `earnings` de `MS` cuando los `earnings` eran de **Snap Inc**.
-  * **Fila 14 (`GS`):** *"Goldman cuts forecast for U.S. economic growth in 2021 and 2022"*. Aquí Goldman no sufre un evento financiero propio, sino que publica un informe macroeconómico.
-* **¿Cómo pulirlo?**  
-  1. **Ampliar las construcciones sintácticas de recomendación sobre terceros:** Cuando el titular **no menciona al banco** (habla de otra empresa como *Snap*, *Apple*, *Tesla*), marcar como rol de analista cualquier aparición en el cuerpo de patrones de emisión de juicio: `downgrade from {banco}`, `upgrade from {banco}`, `downgraded by {banco}`, `upgraded by {banco}`, `{banco} lowered its price target`, `{banco} raised its price target`, `{banco} initiates coverage`, `according to {banco}`.
-  2. **Separar "Pronósticos de Casa de Estudios" de "Hechos del Banco":** Cuando el titular tiene la estructura `{Banco} cuts/raises forecast for [GDP / oil / S&P 500 / inflation]` o `{Banco} warns traders...`, el banco es el **emisor de una opinión macro**, no el sujeto pasivo de un evento financiero.
-
----
-
-### Estrategia 5: Filtrar Notas Robotizadas de Fondos (13F) y Listas Multi-Sector de TV/Apertura
-* **¿Qué ocurre hoy?**  
-  Existen artículos generados por plantillas automáticas que listan compras de fondos pequeños (*13F filings*) o listas de tickers variados de distintos sectores (*"Fast Money Picks: Bank of America, Exxon Mobil, Intel"*). Como los centroides de `m&a` contienen términos como `buys`, `acquires` o `stake`, el modelo confunde la compra de 20.000 acciones por parte de un fondo pequeño con una operación de M&A del banco.
-* **¿Qué FP provocó en la muestra?**  
-  * **Fila 7 (`C`):** *"High Pointe Capital Management Llc Buys Progressive Corp, Micro Focus... Citigroup Inc (C) - 27,520 shares, 2.93% of the total portfolio."* (clasificada erróneamente como `m&a` con `44.71%`).
-  * **Fila 2 (`BAC`):** *"Bank of America, Boeing, Borders in focus"*.
-  * **Fila 3 (`BAC`):** *"Fast Money Picks For April 15: Bank Of America, Exxon Mobil, Intel"*.
-* **¿Cómo pulirlo?**  
-  1. **Filtro de Plantillas 13F / Portafolios:** Descartar como `ruido` los textos con patrón de declaración patrimonial de fondos (`"% of the total portfolio"`, `"shares, X.XX% of"`, `"holdings in"`, `"buys X,XXX shares"` cuando el comprador en el titular es un `Capital Management / Advisors / LLC` ajeno al banco).
-  2. **Filtro de Listas Multi-Ticker sin Cuerpo:** Si un titular tipo lista (`"Fast Money Picks"`, `"Stocks in focus"`, `"Stocks to Watch"`) enumera 3 o más compañías de sectores distintos y **carece de cuerpo específico sobre el banco**, marcarlo como ruido.
-
----
-
-## 4. Resumen del Impacto Esperado al Aplicar estas 5 Mejoras
-
-| Nivel de Pulido | Foco Atacado | Noticias FP Estimadas que se Eliminan | Nuevo Volumen Útil Estimado | Mejora en Precisión Muestral (sobre los 30 útiles de la muestra) |
-| :--- | :--- | :---: | :---: | :---: |
-| **Estado Actual** | Sin post-filtrado adicional | `0` | `37,359` (100%) | **60.0%** (`18 TP / 30`) |
-| **Nivel 1 (Estrategias 1 + 2)** | Titulares huérfanos sin banco + Salvoconducto Macro sin banco en cuerpo | **~4,200 – 4,800** | `~32,500` | Sube a **~78.3%** (elimina los FP de las filas `0, 1, 2, 10, 20, 29`) |
-| **Nivel 2 (+ Estrategia 3 y 4)** | Contaminación de otro banco en titular + Nuevos patrones de Analista (`downgrade from`, `cuts forecast`) | **~2,000 – 2,500** adicionales | `~30,200` | Sube a **~90.0%** (elimina además los FP de las filas `14, 19, 22`) |
-| **Nivel 3 (+ Estrategia 5)** | Plantillas robotizadas 13F (`% of the total portfolio`) + Listas `Fast Money Picks` | **~500 – 800** adicionales | **`~29,500`** | Sube a **>94% – 100%** en la muestra (elimina también las filas `3 y 7`) |
-
+1. **Éxito de la Extracción Secundaria v2 (`df_util_v2.parquet`):**  
+   La actualización del pipeline (`etl_categorizacion.py` + `categorizador.py`) resolvió en origen el problema de las noticias huérfanas y los *fallbacks* vacíos, reduciendo los casos sin mención del banco en titular ni fragmento del **`19.95%` en v1 (`7,453` filas) a solo el `2.02%` en v2 (`550` filas)**, y dejando únicamente **`71` casos (`0.26%`)** que no mencionan tampoco al sector bancario (`FP_1 + FP_2`).
+2. **Salto de Calidad Demostrado en los EDAs:**  
+   * La precisión muestral directa de `df_util_v2.parquet` alcanza el **`80.0%–83.3%`** (frente al `60.0%` de v1).
+   * El porcentaje de Falsos Negativos reales en el ruido descartado (`is_ruido == True`) es mínimo (**`~6.7%`**, `2/30` noticias).
+   * La cobertura temporal `2010–2023` se mantiene al **`100%` en los 6 bancos** (`0` años vacíos).
+3. **Criterio de Uso de `df_util_v2.parquet`:**  
+   * **`df_util_v2.parquet` (`27,217` registros) está listo para alimentar directamente la fase de análisis de sentimiento con FinBERT.**
+   * **No se deben restar las cubetas `FP_3` ni `FP_4` tal como estaban definidas en v1**, ya que sobre el nuevo `process_text` de v2 destruirían más de `1,200` noticias verdaderas (`TP` convertidos en `FN`) de resultados trimestrales y revisiones de rating de los propios bancos.
+   * Si se desea aplicar una micro-limpieza quirúrgica opcional antes de FinBERT, basta exclusivamente con excluir **`FP_1` (14 filas)**, **`FP_2` (57 filas)** y **`FP_5` (105 filas de plantillas 13F)**, lo que retira **`176` registros de ruido puro (`0.65%`)** y conserva **`27,041` noticias útiles** sin perder ni un solo Verdadero Positivo.
