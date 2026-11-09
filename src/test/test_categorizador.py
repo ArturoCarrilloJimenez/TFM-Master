@@ -281,3 +281,77 @@ def test_clasificar_dataset_multiprocessing_mock():
         assert len(results) == 2  # 2 chunks ejecutados
         assert mock_executor.submit.call_count == 2
 
+
+def test_es_rol_analista_extended():
+    """Verifica los patrones extendidos de rol analista y pronosticador sobre terceros."""
+    # 1. Downgrade from en cuerpo sin banco en titular
+    titular_snap = "Why Snap Inc Stock Fell Thursday"
+    cuerpo_snap = "Shares dropped following an analyst downgrade from Morgan Stanley citing slowing user metrics."
+    assert CategorizadorArticulos.es_rol_analista_tercero(titular_snap, cuerpo_snap, "MS") is True
+
+    # 2. Banco en titular emitiendo pronóstico macro/mercado
+    titular_forecast = "Goldman cuts forecast for U.S. economic growth in 2021 and 2022"
+    assert CategorizadorArticulos.es_rol_analista_tercero(titular_forecast, "", "GS") is True
+
+    # 3. Evento corporativo legítimo propio del banco no debe saltar
+    titular_mna = "Why Goldman is Set to Acquire Startup Firm Honest Dollar"
+    cuerpo_mna = "Goldman Sachs agreed to acquire the retirement plan digital startup."
+    assert CategorizadorArticulos.es_rol_analista_tercero(titular_mna, cuerpo_mna, "GS") is False
+
+
+def test_es_contaminacion_competidor():
+    """Verifica el filtro de titular con protagonismo exclusivo de un competidor (cross-bank bleed)."""
+    # 1. Habla exclusivamente de Citi pero la fila pertenece a BAC
+    assert CategorizadorArticulos.es_contaminacion_competidor("Citi: Moody's Raises Outlook to Stable", "BAC") is True
+
+    # 2. Habla de Citi pero la fila pertenece a JPM
+    assert CategorizadorArticulos.es_contaminacion_competidor("Citigroup Warns Bond Traders Are Misreading Inflation", "JPM") is True
+
+    # 3. Mención colectiva o comparativa de grandes bancos no es contaminación
+    assert CategorizadorArticulos.es_contaminacion_competidor("Is Bank of America Really the Stingiest Big Bank?", "C") is False
+    assert CategorizadorArticulos.es_contaminacion_competidor("Wall Street Banks rally after Fed stress test results", "WFC") is False
+
+
+def test_es_plantilla_irrelevante():
+    """Verifica el descarte de reportes 13F y listas multi-ticker de TV sin cuerpo."""
+    # 1. Declaración patrimonial 13F
+    cuerpo_13f = "High Pointe Capital Buys Progressive Corp... Citigroup Inc (C) - 27,520 shares, 2.93% of the total portfolio."
+    assert CategorizadorArticulos.es_plantilla_irrelevante("High Pointe Buys Stocks", cuerpo_13f) is True
+
+    # 2. Lista de TV sin cuerpo
+    titular_tv = "Fast Money Picks For April 15: Bank Of America, Exxon Mobil, Intel"
+    assert CategorizadorArticulos.es_plantilla_irrelevante(titular_tv, "") is True
+
+    # 3. Noticia legítima no debe saltar
+    assert CategorizadorArticulos.es_plantilla_irrelevante("Bank of America raises dividend", "The bank announced higher quarterly payouts.") is False
+
+
+def test_regla_anclaje_titulares_huerfanos():
+    """Verifica que titulares sin cuerpo sin mención del banco sean descartados como ruido."""
+    # 1. Titular sin cuerpo y sin mención a GS (debe ser ruido aunque tenga score alto)
+    ruido_huerfano = CategorizadorArticulos.evaluar_es_ruido(
+        cat="macro",
+        score=0.45,
+        es_corta=True,
+        banco_prominente=False,
+        banco_en_titular=False,
+        es_macro=False,
+        rol_analista=False,
+        es_ticker_puro=True,
+    )
+    assert ruido_huerfano is True
+
+    # 2. Titular sin cuerpo que SÍ menciona al banco (debe pasar si supera umbral)
+    util_con_banco = CategorizadorArticulos.evaluar_es_ruido(
+        cat="earnings",
+        score=0.45,
+        es_corta=True,
+        banco_prominente=True,
+        banco_en_titular=True,
+        es_macro=False,
+        rol_analista=False,
+        es_ticker_puro=True,
+    )
+    assert util_con_banco is False
+
+

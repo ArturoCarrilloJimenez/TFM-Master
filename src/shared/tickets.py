@@ -60,3 +60,40 @@ ANALYST_ROLE_TERMS: list[str] = [
     "analyst", "analysts", "strategist", "strategists",
     "economist", "economists", "equity research", "note to clients", "notes to clients",
 ]
+
+# Patrones sintácticos extendidos de rol de analista / casa de estudios sobre terceros
+ANALYST_ROLE_EXTENDED_PATTERNS: list[str] = [
+    "downgrade from", "downgraded by", "downgrades from", "downgrades by",
+    "upgrade from", "upgraded by", "upgrades from", "upgrades by",
+    "price target from", "price target by", "lowered its price target",
+    "raised its price target", "cuts price target", "raises price target",
+    "initiates coverage", "initiated coverage", "maintains conviction",
+    "bullish conviction", "note to clients", "notes to clients",
+    "cuts forecast", "raises forecast", "lowers forecast",
+]
+
+# Términos de impacto bancario sistémico para validar la categoría macro
+SYSTEMIC_BANKING_TERMS: list[str] = [
+    "bank stocks", "banking sector", "financial sector", "big banks",
+    "stress test", "stress tests", "capital requirements", "bank liquidity",
+    "fed stress", "deposit outflows", "deposit insurance", "fdic",
+    "bank failure", "regional banks", "wall street banks",
+]
+
+# Patrones de declaraciones patrimoniales de fondos (13F)
+PORTFOLIO_13F_PATTERNS: list[str] = [
+    r"% of the total portfolio",
+    r"shares,\s*\d+\.\d+%\s*of",
+    r"holdings in",
+    r"position in",
+    r"new stake in",
+]
+
+# Patrones de titulares de listas multi-ticker de TV / resúmenes de apertura sin cuerpo
+MULTI_TICKER_LIST_PATTERNS: list[str] = [
+    r"fast money picks",
+    r"stocks to watch",
+    r"stocks in focus",
+    r"movers and shakers",
+    r"top picks for",
+]
