@@ -92,11 +92,17 @@ Al calcular las similitudes respecto a todos los centroides:
 El código no se limita a calcular un coseno vectorial; incorpora soluciones a tres grandes problemas de la prensa financiera:
 
 ### A. Resolución del *Buried Lead* (Titular vs. Párrafo Oculto)
+
 En periodismo financiero (Reuters, Bloomberg, Dow Jones), el titular suele ser un resumen global, pero el detalle sobre el banco objetivo (ej. JPMorgan) está "enterrado" en el tercer o cuarto párrafo.
+
 * **Solución (`extraer_fragmento_y_presencia`):** El algoritmo busca el párrafo específico donde se nombra al banco, ignora el *boilerplate* genérico del sector (*"X is part of the financial sector..."*) y extrae una ventana de 400 caracteres.
 * **Fusión adaptativa ponderada:**
-  $$\vec{e}_{\text{doc}} = \frac{0.65 \cdot \vec{e}_{\text{titular}} + 0.35 \cdot \vec{e}_{\text{fragmento}}}{\|0.65 \cdot \vec{e}_{\text{titular}} + 0.35 \cdot \vec{e}_{\text{fragmento}}\|_2}$$
-  Esto garantiza que el 65% del peso mantenga el tópico general de la noticia mientras el 35% aporta el contexto específico de la entidad.
+
+```math
+\vec{e}_{\text{doc}} = \frac{0.65 \cdot \vec{e}_{\text{titular}} + 0.35 \cdot \vec{e}_{\text{fragmento}}}{\|0.65 \cdot \vec{e}_{\text{titular}} + 0.35 \cdot \vec{e}_{\text{fragmento}}\|_2}
+```
+
+Esto garantiza que el 65% del peso mantenga el tópico general de la noticia mientras el 35% aporta el contexto específico de la entidad.
 
 ### B. Mitigación de Falsos Positivos de Tickers (`\b` Regex)
 Tickers de dos letras como **GS** (*Goldman Sachs*) o **MS** (*Morgan Stanley*) colisionan frecuentemente si se buscan como subcadenas simples:
