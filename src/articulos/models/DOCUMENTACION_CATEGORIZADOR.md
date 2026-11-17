@@ -10,7 +10,7 @@ En el lago de datos financiero (Cloudflare R2, capa Bronze) disponemos de un his
 
 Sin embargo, el dato crudo presenta dos graves patologías para el modelado cuantitativo:
 
-1. **Ruido masivo (~58% de las noticias no son relevantes):** En los feeds de noticias financieras aparecen con frecuencia artículos de estilo de vida, resúmenes genéricos de Wall Street, resultados de ensayos clínicos o noticias de consumo que mencionan de pasada un ticker sin aportar información del valor del banco.
+1. **Ruido masivo (~70 % de las noticias no son relevantes):** el categorizador actual (v2) descarta **62.629 de 89.846 noticias (69,71 %)** y deja **27.217 útiles (30,29 %)**. La primera versión (v1) descartaba 52.487 (58,42 %), pero dejaba pasar demasiado ruido (ver §5). En los feeds de noticias financieras aparecen con frecuencia artículos de estilo de vida, resúmenes genéricos de Wall Street, resultados de ensayos clínicos o noticias de consumo que mencionan de pasada un ticker sin aportar información del valor del banco.
 2. **Coste e ineficiencia de cómputo:** Pasar 90.000 artículos completos por un modelo Transformer pesado como **FinBERT** (longitud de contexto 512 tokens) requeriría cientos de horas de inferencia en CPU y degradaría la señal predictiva al calcular polaridades sobre eventos irrelevantes.
 
 > **Objetivo:** Construir un filtro de alta velocidad (*Gatekeeper*) que opere aguas arriba de FinBERT, descartando el ruido con coste computacional 0,00 € y clasificando los artículos legítimos en 6 dimensiones financieras corporativas (*Earnings, M&A, Legal, Macro, Credit, Governance*).
@@ -42,13 +42,16 @@ A continuación se ilustra la arquitectura geométrica del modelo y el procedimi
 
 ![Espacio Semántico Prototípico en S^383](../../../img/espacio_semantico_categorizador.png)
 
+> [!WARNING]
+> **Esquema ilustrativo, no una medición.** Las posiciones de los puntos en el gráfico y los valores de coseno de los ejemplos (0,58, 0,52, 0,21, 0,68, 0,29) están elegidos a mano para explicar el mecanismo. **No** son una proyección real (PCA/t-SNE) de los embeddings de `all-MiniLM-L6-v2` ni salidas reales del modelo. Los titulares de ejemplo tampoco proceden del corpus. Las cifras de rendimiento reales están únicamente en la sección 5.
+
 ---
 
 ### A. Elementos Clave del Espacio Semántico
 
 * **Los 6 Clusters Financieros:** Cada categoría empresarial canónica (*Earnings, M&A, Macro, Legal, Credit, Governance*) está representada por una estrella que simboliza su **centroide prototípico** $\vec{c}_k \in \mathbb{S}^{383}$, rodeado por sus ejemplos de entrenamiento (*exemplars*).
 * **El Radio de Aceptación ($\tau = 0.38$):** El círculo punteado marca la frontera del umbral de decisión. Cualquier artículo proyectado dentro del radio posee afinidad angular suficiente para considerarse relevante.
-* **La Nube Periférica de Ruido (~58% del corpus):** Puntos grises en forma de aspa que representan artículos fuera de dominio (*lifestyle, deportes, podcasts, tecnología, resúmenes diarios de bolsa*). Caen alejados de los centroides y se purgan automáticamente sin llegar a FinBERT.
+* **La Nube Periférica de Ruido (~70 % del corpus en la v2):** Puntos grises en forma de aspa que representan artículos fuera de dominio (*lifestyle, deportes, podcasts, tecnología, resúmenes diarios de bolsa*). Caen alejados de los centroides y se purgan automáticamente sin llegar a FinBERT.
 * **Línea Amarilla (Frontera de Decisión / Voronoi Boundary):** Divide la región geométrica equidistante entre dos centroides contiguos. Determina matemáticamente qué categoría gana cuando un texto se encuentra en zona de solapamiento.
 
 ---
@@ -89,7 +92,7 @@ Al calcular las similitudes respecto a todos los centroides:
 
 ## 4. Innovaciones Clave y Reglas de Dominio Financiero
 
-El código no se limita a calcular un coseno vectorial; incorpora soluciones a tres grandes problemas de la prensa financiera:
+El código no se limita a calcular un coseno vectorial; incorpora soluciones a seis problemas de la prensa financiera (apartados A a F):
 
 ### A. Resolución del *Buried Lead* (Titular vs. Párrafo Oculto)
 
@@ -104,6 +107,8 @@ En periodismo financiero (Reuters, Bloomberg, Dow Jones), el titular suele ser u
 
 Esto garantiza que el 65% del peso mantenga el tópico general de la noticia mientras el 35% aporta el contexto específico de la entidad.
 
+---
+
 ### B. Mitigación de Falsos Positivos de Tickers (`\b` Regex)
 Tickers de dos letras como **GS** (*Goldman Sachs*) o **MS** (*Morgan Stanley*) colisionan frecuentemente si se buscan como subcadenas simples:
 * `"gs"` coincide dentro de: *earnin**gs***, *holdin**gs***, *thin**gs***.
@@ -113,32 +118,80 @@ Tickers de dos letras como **GS** (*Goldman Sachs*) o **MS** (*Morgan Stanley*) 
 ### C. Desambiguación del Rol de Analista (`es_rol_analista_tercero`)
 Con mucha frecuencia, un banco de inversión aparece en las noticias no porque le ocurra algo a su negocio, sino porque su departamento de análisis ha emitido una recomendación sobre un tercero (ej: *"Goldman Sachs sube el precio objetivo de Apple"*).
 * Si ese artículo se procesara para Goldman Sachs, falsearía el sentimiento de sus propias acciones.
-* **Solución:** Se analizan patrones sintácticos (*"note to clients"*, *"upgrades"*, *"downgrades"*, *"reiterated buy"*). Si el banco es sujeto opinando sobre un tercero, el categorizador lo clasifica como **Ruido** para el ticker del banco.
+* **Solución:** Se analizan patrones sintácticos (*"note to clients"*, *"upgrades"*, *"downgrades"*, *"reiterated buy"*, y listas ampliadas de términos de analista en `shared/tickets.py`). Si el banco es sujeto opinando sobre un tercero, el categorizador lo clasifica como **Ruido** para el ticker del banco.
+* **Limitación conocida:** la auditoría de la v2 detectó que reglas de este tipo aplicadas como *post-filtro* sobre el fragmento actual pueden descartar noticias legítimas en las que el banco bate estimaciones de analistas o recibe un *upgrade* (ver §5.3).
 
-### D. Umbrales Adaptativos de Decisión (`evaluar_es_ruido`)
-En lugar de un umbral fijo e insensible, el filtro utiliza umbrales dinámicos ($\tau$):
-* **Mención prominente del banco o contexto macro:** Umbral accesible $\tau = 0.38$.
-* **Mención secundaria / colateral:** Umbral estricto $\tau = 0.48$.
-* **Titulares breves (sin cuerpo):** Umbral ágil $\tau = 0.30$.
-* **Cables monoticker sin cuerpo pero categoría financiera sólida:** Rescate garantizado con $\tau \ge 0.35$.
+### D. Umbrales Adaptativos y Reglas de Anclaje (`evaluar_es_ruido`)
+En lugar de un umbral fijo e insensible, el filtro aplica **descartes duros** y después **umbrales dinámicos** ($\tau$) sobre la confianza de la categoría ganadora. Orden de evaluación en el código actual:
+
+| Paso | Regla | Resultado |
+| :-: | :--- | :--- |
+| 1 | Rol de analista sobre un tercero (§C), contaminación por banco competidor (§E), plantilla irrelevante (§F) o categoría ganadora `ruido` | **Ruido** (descarte directo) |
+| 2 | Umbral $\tau$ según el contexto (ver tabla inferior): si `confianza < τ` | **Ruido** |
+| 3 | Anclaje: si la categoría **no** es macro y el banco **no** es prominente (ni en titular ni en el fragmento) | **Ruido** |
+| 4 | Si la categoría es macro, el banco no es prominente y el texto no tiene impacto bancario sistémico | **Ruido** |
+| 5 | Titular sin cuerpo en el que el banco no aparece en el titular y no hay impacto macro sistémico | **Ruido** |
+| 6 | Ninguna de las anteriores | **Señal** (pasa a FinBERT) |
+
+Umbral $\tau$ del paso 2:
+
+| Caso | $\tau$ |
+| :--- | :---: |
+| Artículo con cuerpo, banco prominente o contexto macro | 0,38 |
+| Artículo con cuerpo, mención secundaria | 0,48 |
+| Titular sin cuerpo, banco en titular o contexto macro | 0,30 |
+| Titular sin cuerpo, resto de casos | 0,38 |
+
+> [!NOTE]
+> La versión anterior de este documento incluía una regla de "rescate de cables monoticker" ($\tau \ge 0{,}35$). **Ya no existe en el código actual**: la sustituyen las reglas de anclaje de los pasos 3 a 5.
+
+### E. Contaminación por Banco Competidor (`es_contaminacion_competidor`)
+Un mismo texto aparece asociado a varios bancos (*cross-bank bleed*). Si el **titular** habla de otro banco del Big 6 y no del banco asignado, la fila se descarta, salvo que: el titular nombre al banco asignado, hable de forma genérica del sector (*"banks", "peers", "rivals", "Wall Street", "banking sector"*) o el banco asignado aparezca en el cuerpo.
+
+### F. Plantillas Irrelevantes (`es_plantilla_irrelevante`)
+Descarta notas robotizadas sin información del banco: declaraciones patrimoniales de fondos (patrones **13F**, "% of the total portfolio") y titulares tipo lista multi-ticker sin cuerpo.
 
 ---
 
 ## 5. Validación Empírica y Resultados
 
-Para certificar que el modelo no sufría sobreajuste ni sesgos locales, se validó con un **Gold Standard** de 306 artículos anotados a ciegas en 3 semillas aleatorias independientes (*Out-of-Sample*):
+> [!IMPORTANT]
+> Hay **dos mediciones distintas** y no son comparables entre sí. La auditoría de la v2 (§5.2) es la más reciente y describe el clasificador actual. La validación de §5.1 procede del ADR-005 y **no se ha podido confirmar sobre qué versión del clasificador se calculó**; se conserva como referencia histórica hasta repetirla sobre la v2.
+
+### 5.1. Validación inicial documentada en ADR-005 (306 artículos, 3 semillas)
 
 | Métrica de Calidad | Semilla 1 (Benchmark) | Semilla 2 (Out-of-Sample) | Semilla 3 (Out-of-Sample) | Promedio Global |
 | :--- | :---: | :---: | :---: | :---: |
 | **Artículos Evaluados** | 102 | 102 | 102 | **306** |
 | **Pasan a FinBERT (Señal)** | 52.0% | 52.9% | 51.0% | **51.9%** |
-| **Ruido Descartado** | 48.0% | 47.1% | 49.0% | **48.1%** (~58% en corpus global) |
+| **Ruido Descartado** | 48.0% | 47.1% | 49.0% | **48.1%** |
 | **Recall (Sensibilidad)** | 81.0% | 89.8% | 87.5% | **86.1%** |
 | **Precisión** | 79.1% | 81.5% | 80.8% | **80.5%** |
 | **F1-Score** | **80.0%** | **85.4%** | **84.0%** | **83.1%** |
-| **Tasa Falsos Negativos** | < 0.3% | < 0.2% | < 0.2% | **< 0.2%** |
 
-> **Conclusión Clave:** Una tasa de falsos negativos menor al 0,2% asegura que casi ninguna noticia relevante para el banco se pierde, mientras se purga más de la mitad del volumen total de datos innecesarios.
+> Nota: la muestra de 306 artículos está equilibrada a propósito (≈ 50 % señal), por lo que el porcentaje de ruido de la muestra no equivale al del corpus completo.
+
+### 5.2. Auditoría de la v2 sobre el corpus completo (`df_util_v2`, N = 89.846)
+
+Fuente: `src/notebooks/FP_origen_auditoria_zero_shot.md` y notebooks `zero_shot_clasiffication_*`.
+
+| Indicador | v1 | v2 (actual) |
+| :--- | :---: | :---: |
+| Noticias útiles (`is_ruido = False`) | 37.359 (41,58 %) | **27.217 (30,29 %)** |
+| Noticias descartadas como ruido | 52.487 (58,42 %) | **62.629 (69,71 %)** |
+| Útiles sin el banco en titular ni en fragmento | 19,95 % (7.453) | **2,02 % (550)** |
+| Precisión en muestra manual (N = 30 útiles) | 60,0 % | **80,0 % – 83,3 %** |
+| Valor predictivo negativo (N = 30 descartadas) | 83,3 % | **86,7 % – 93,3 %** |
+| Exactitud global (N = 60) | 71,7 % | **85,0 % – 88,3 %** |
+
+Los rangos reflejan dos criterios de revisión (estricto y laxo). Las muestras son pequeñas (30 + 30 noticias), así que **las cifras de la v2 son indicativas, no definitivas**.
+
+### 5.3. Hallazgos y limitaciones de la v2
+* **Falsos negativos:** en la muestra de 30 noticias descartadas, 2 eran útiles reales (≈ 6,7 %). Uno de ellos era un evento crítico (pérdida trimestral de Wells Fargo) descartado porque el titular era genérico y su confianza (35,99 %) no superó el umbral.
+* **Pureza tras limpieza:** sobre el "núcleo limpio" (25.551 noticias, 93,88 %), una muestra de 30 dio 29 verdaderos positivos (96,7 %).
+* **Atribución de entidad:** en titulares sin cuerpo con varios tickers, el sujeto real puede ser otro banco (contaminación cruzada residual).
+* **Post-filtros antiguos:** las cubetas `FP_3` (otro banco en titular) y `FP_4` (banco como analista) **no deben aplicarse** sobre el `process_text` de la v2: destruirían más de 1.200 noticias verdaderas.
+* **Pendiente:** repetir la validación de 306 artículos sobre la v2 para obtener recall, precisión y F1 comparables y calcular una tasa de falsos negativos con muestra suficiente.
 
 ---
 
@@ -149,6 +202,7 @@ Para certificar que el modelo no sufría sobreajuste ni sesgos locales, se valid
 * **Job de Procesamiento en Lotes (ETL):** [`src/articulos/etl_categorizacion.py`](../../articulos/etl_categorizacion.py)
 * **Banco de Pruebas Unitarias:** [`src/test/test_categorizador.py`](../../test/test_categorizador.py) y [`src/test/test_etl_categorizacion.py`](../../test/test_etl_categorizacion.py)
 * **Diccionarios de Categorías y Alias:** [`src/articulos/categories.py`](../../articulos/categories.py) y [`src/shared/tickets.py`](../../shared/tickets.py)
+* **Auditoría de la v2 (falsos positivos y negativos):** [`src/notebooks/FP_origen_auditoria_zero_shot.md`](../../notebooks/FP_origen_auditoria_zero_shot.md)
 
 ### B. Fundamentos Teóricos y Fuentes de Aprendizaje
 * **Tutorial de Clasificación Zero-Shot (DataCamp):**  
