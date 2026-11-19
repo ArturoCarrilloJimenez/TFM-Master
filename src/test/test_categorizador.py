@@ -40,27 +40,34 @@ def test_resolver_cuerpo_noticia():
     assert CategorizadorArticulos.resolver_cuerpo_noticia(row4, "Titular") == ""
 
 
-def test_extraer_fragmento_relevante_boilerplate():
+def test_extraer_contexto_boilerplate():
     """Verifica la eliminación de boilerplate sectorial."""
     cuerpo = (
         "Regional banking has been volatile this quarter. "
         "JPMorgan Chase raised its dividend by 10 percent following stress test results.\n\n"
         "JPMorgan is a part of the finance sector, which includes Bank of America and Wells Fargo."
     )
-    frag = CategorizadorArticulos.extraer_fragmento_relevante("Titular", cuerpo, "JPM")
+    frag, presente = CategorizadorArticulos.extraer_contexto_banco(
+        "Titular", cuerpo, "JPM", ventana_frases=0, incluir_titular=False, max_chars=400
+    )
+    assert presente is True
     assert "raised its dividend by 10 percent" in frag
     assert "part of the finance sector" not in frag
 
 
-def test_extraer_fragmento_y_presencia():
-    """Verifica que extraer_fragmento_y_presencia reporte correctamente la presencia del banco."""
+def test_extraer_contexto_y_presencia():
+    """Verifica que extraer_contexto_banco reporte correctamente la presencia del banco."""
     cuerpo = "Economic update. Wells Fargo reported solid retail deposit growth this year."
-    frag, presente = CategorizadorArticulos.extraer_fragmento_y_presencia("Update", cuerpo, "WFC")
+    frag, presente = CategorizadorArticulos.extraer_contexto_banco(
+        "Update", cuerpo, "WFC", ventana_frases=0, incluir_titular=False, max_chars=400
+    )
     assert presente is True
     assert "Wells Fargo" in frag
 
     cuerpo_ajeno = "Tesla shares fell amid broader automotive market declines."
-    frag_ajeno, presente_ajeno = CategorizadorArticulos.extraer_fragmento_y_presencia("Update", cuerpo_ajeno, "WFC")
+    frag_ajeno, presente_ajeno = CategorizadorArticulos.extraer_contexto_banco(
+        "Update", cuerpo_ajeno, "WFC", ventana_frases=0, incluir_titular=False, max_chars=400
+    )
     assert presente_ajeno is False
 
 
@@ -238,16 +245,16 @@ def test_extraer_fragmento_boilerplate_skip_and_fallback():
         "is a part of the finance sector, which includes Bank of America and other institutions.\n"
         "Bank of America announced an expansion of its small business lending program today."
     )
-    frag, presence = CategorizadorArticulos.extraer_fragmento_y_presencia(
-        "Expansion", cuerpo_boilerplate, "BAC"
+    frag, presence = CategorizadorArticulos.extraer_contexto_banco(
+        "Expansion", cuerpo_boilerplate, "BAC", ventana_frases=0, incluir_titular=False, max_chars=400
     )
     assert presence is True
     assert "expansion of its small business" in frag.lower()
 
     # 2. Cuerpo sin mención del banco debe devolver fallback con presence=False
     cuerpo_sin_banco = "Apple announced a new line of consumer electronics and tablets in California."
-    frag_fallback, presence_fallback = CategorizadorArticulos.extraer_fragmento_y_presencia(
-        "Tech News", cuerpo_sin_banco, "JPM"
+    frag_fallback, presence_fallback = CategorizadorArticulos.extraer_contexto_banco(
+        "Tech News", cuerpo_sin_banco, "JPM", ventana_frases=0, incluir_titular=False, max_chars=400
     )
     assert presence_fallback is False
     assert "Apple announced" in frag_fallback

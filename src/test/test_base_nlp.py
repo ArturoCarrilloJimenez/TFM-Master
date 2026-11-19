@@ -20,39 +20,60 @@ def test_resolver_cuerpo_noticia_base():
     assert BaseProcesadorArticulo.resolver_cuerpo_noticia(row_vacio, "Titular") == ""
 
 
-def test_extraer_oraciones_banco_finbert():
-    """Verifica la extracción semántica de oraciones completas (+/- 1 ventana) para FinBERT."""
+def test_extraer_contexto_banco_finbert():
+    """Verifica la extracción semántica de oraciones completas (ventana 0 y +/- 1) con [SEP] y abreviaturas."""
     titular = "Wall Street closes higher amid corporate earnings wave"
     cuerpo = (
         "Markets rallied today driven by tech stocks. "
         "Inflation fears eased following new economic data. "
-        "Goldman Sachs reported net earnings up 25% beating analysts estimates. "
+        "Goldman Sachs Inc. reported net earnings up 25% beating analysts estimates. "
         "The investment bank saw strong performance in its equities trading unit. "
         "Meanwhile retail companies suffered margin contractions. "
         "Overall trading volume remained elevated throughout the session."
     )
 
-    # 1. Caso con banco localizado: debe incluir la frase anterior + la frase del banco + la frase posterior
-    texto_extraido, localizado = BaseProcesadorArticulo.extraer_oraciones_banco(
+    # 1. Ventana 0 (foco estricto contra contagio sintáctico): solo titular + frase del banco
+    texto_v0, localizado_v0 = BaseProcesadorArticulo.extraer_contexto_banco(
+        titular=titular,
+        cuerpo=cuerpo,
+        ticker_banco="GS",
+        ventana_frases=0,
+    )
+    assert localizado_v0 is True
+    assert f"{titular} [SEP] " in texto_v0
+    assert "Goldman Sachs Inc. reported net earnings up 25%" in texto_v0
+    assert "Inflation fears eased" not in texto_v0
+
+    # 2. Ventana ±1: incluye frase anterior + frase del banco + frase posterior
+    texto_v1, localizado_v1 = BaseProcesadorArticulo.extraer_contexto_banco(
         titular=titular,
         cuerpo=cuerpo,
         ticker_banco="GS",
         ventana_frases=1,
     )
+    assert localizado_v1 is True
+    assert "Inflation fears eased following new economic data." in texto_v1
+    assert "The investment bank saw strong performance in its equities trading unit." in texto_v1
+    assert "Markets rallied today driven by tech stocks." not in texto_v1
+    assert "Overall trading volume remained elevated" not in texto_v1
 
+
+def test_extraer_contexto_banco_abreviaturas_y_normalizacion():
+    """Verifica que la regex no rompa abreviaturas (J.P., U.S., Inc.) y normalice alias sin puntos."""
+    titular = "Bank earnings beat expectations"
+    cuerpo = "J.P. Morgan Chase & Co. reported profit of $3.5 billion. The U.S. lender beat estimates."
+    texto, localizado = BaseProcesadorArticulo.extraer_contexto_banco(
+        titular=titular,
+        cuerpo=cuerpo,
+        ticker_banco="JPM",
+        ventana_frases=0,
+    )
     assert localizado is True
-    assert titular in texto_extraido
-    assert "Goldman Sachs reported net earnings up 25%" in texto_extraido
-    # Frase anterior incluida
-    assert "Inflation fears eased following new economic data." in texto_extraido
-    # Frase posterior incluida
-    assert "The investment bank saw strong performance in its equities trading unit." in texto_extraido
-    # Frases lejanas NO deben estar incluidas
-    assert "Markets rallied today driven by tech stocks." not in texto_extraido
-    assert "Overall trading volume remained elevated" not in texto_extraido
+    assert "J.P. Morgan Chase & Co. reported profit of $3.5 billion." in texto
+    assert "The U.S. lender beat estimates." not in texto
 
 
-def test_extraer_oraciones_banco_fallback_sin_mencion_en_cuerpo():
+def test_extraer_contexto_banco_fallback_sin_mencion_en_cuerpo():
     """Verifica que si el banco no está en el cuerpo, caiga al titular + primera frase."""
     titular = "JPMorgan CEO Jamie Dimon speaks at annual economic forum"
     cuerpo = (
@@ -60,7 +81,7 @@ def test_extraer_oraciones_banco_fallback_sin_mencion_en_cuerpo():
         "Geopolitical tensions continue to weigh on consumer confidence."
     )
 
-    texto_extraido, localizado = BaseProcesadorArticulo.extraer_oraciones_banco(
+    texto_extraido, localizado = BaseProcesadorArticulo.extraer_contexto_banco(
         titular=titular,
         cuerpo=cuerpo,
         ticker_banco="JPM",
@@ -72,10 +93,10 @@ def test_extraer_oraciones_banco_fallback_sin_mencion_en_cuerpo():
     assert "Global growth is facing headwinds from monetary tightening." in texto_extraido
 
 
-def test_extraer_oraciones_banco_sin_cuerpo():
+def test_extraer_contexto_banco_sin_cuerpo():
     """Verifica el comportamiento cuando no hay cuerpo (noticia solo titular)."""
     titular = "Bank of America raises prime lending rate to 8.5%"
-    texto_extraido, localizado = BaseProcesadorArticulo.extraer_oraciones_banco(
+    texto_extraido, localizado = BaseProcesadorArticulo.extraer_contexto_banco(
         titular=titular,
         cuerpo="",
         ticker_banco="BAC",
