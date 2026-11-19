@@ -125,7 +125,14 @@ class CategorizadorArticulos(BaseProcesadorArticulo):
             else (t_count > 1)
         )
 
-        frag, banco_en_cuerpo = self.extraer_fragmento_y_presencia(titular, cuerpo, ticker, max_chars=400)
+        frag, banco_en_cuerpo = self.extraer_contexto_banco(
+            titular,
+            cuerpo,
+            ticker,
+            ventana_frases=0,
+            incluir_titular=False,
+            max_chars=400,
+        )
         t_lower = titular.lower()
         c_lower = frag.lower() if frag else ""
         aliases = ALIAS_BANCOS.get(ticker, [ticker.lower()])

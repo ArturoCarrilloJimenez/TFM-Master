@@ -18,8 +18,15 @@ from shared.tickets import (
     PORTFOLIO_13F_PATTERNS,
 )
 
-# Regex estándar para segmentación de oraciones en inglés financiero
-SENTENCE_SPLIT_REGEX = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+# Regex estándar para segmentación de oraciones en inglés financiero (protege abreviaturas y meses)
+SENTENCE_SPLIT_REGEX = re.compile(
+    r"(?<=[.!?])"
+    r"(?<!\bJ\.P\.)(?<!\bU\.S\.)(?<!\bU\.K\.)(?<!\bL\.L\.C\.)(?<!\bL\.P\.)(?<!\bN\.A\.)"
+    r"(?<!\bInc\.)(?<!\bCorp\.)(?<!\bLtd\.)(?<!\bCo\.)(?<!\bLLC\.)"
+    r"(?<!\bJan\.)(?<!\bFeb\.)(?<!\bMar\.)(?<!\bApr\.)(?<!\bAug\.)(?<!\bSept\.)(?<!\bSep\.)(?<!\bOct\.)(?<!\bNov\.)(?<!\bDec\.)"
+    r"(?<!\bNo\.)(?<!\bvs\.)(?<!\bEst\.)(?<!\bMr\.)(?<!\bMrs\.)(?<!\bMs\.)(?<!\bDr\.)"
+    r"\s+(?=[A-Z0-9\"'(])"
+)
 
 
 class BaseProcesadorArticulo:
@@ -51,90 +58,74 @@ class BaseProcesadorArticulo:
 
         return candidato
 
+    @staticmethod
+    def _normalizar_texto(texto: str) -> str:
+        """Normaliza puntos y guiones para capturar variantes como 'J.P. Morgan' -> 'jp morgan'."""
+        return re.sub(r"\s+", " ", texto.replace(".", "").replace("-", " ")).strip()
+
+    @staticmethod
+    def limpiar_boilerplate(cuerpo: str) -> str:
+        """Elimina cabeceras publicitarias y disclaimers estándar de Zacks/reportes."""
+        out = re.sub(r"^.*Free Stock Analysis Report.*$", "", cuerpo, flags=re.IGNORECASE | re.MULTILINE)
+        out = re.sub(
+            r"^.*(Zacks Investment Research|To read this article on Zacks).*$",
+            "",
+            out,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        return out.strip()
+
     @classmethod
-    def extraer_fragmento_y_presencia(
-        cls, titular: str, cuerpo: str, ticker_banco: str, max_chars: int = 400
+    def extraer_contexto_banco(
+        cls,
+        titular: str,
+        cuerpo: str,
+        ticker_banco: str,
+        ventana_frases: int = 0,
+        incluir_titular: bool = True,
+        separador: str = " [SEP] ",
+        max_chars: int | None = None,
     ) -> tuple[str, bool]:
-        """Extrae el fragmento guiado por caracteres (para categorización semántica) y si fue localizado."""
-        if not cuerpo or cuerpo.lower() in ["none", "nan", ""]:
-            return "", False
-
-        aliases = ALIAS_BANCOS.get(ticker_banco, [ticker_banco.lower()])
-        parrafos = [p.strip() for p in re.split(r"\n+|, \n+", cuerpo) if len(p.strip()) > 30]
-
-        # 1. Buscar en párrafos legítimos donde aparezca el banco
-        for p in parrafos:
-            p_lower = p.lower()
-            if any(bp in p_lower for bp in BOILERPLATE_SECTOR_PATTERNS):
-                continue
-            for a in aliases:
-                match = re.search(r"\b" + re.escape(a) + r"\b", p_lower)
-                if match:
-                    start_pos = max(0, match.start() - 150)
-                    end_pos = min(len(p), match.end() + 250)
-                    return p[start_pos:end_pos].strip(), True
-
-        # 2. Si no aparece en párrafos limpios, buscar en cuerpo completo libre de boilerplate
-        p_limpio = cuerpo
-        for bp in BOILERPLATE_SECTOR_PATTERNS:
-            p_limpio = re.sub(bp + r".*?(\n|$)", "", p_limpio, flags=re.IGNORECASE)
-
-        p_limpio_lower = p_limpio.lower()
-        for a in aliases:
-            match = re.search(r"\b" + re.escape(a) + r"\b", p_limpio_lower)
-            if match:
-                start_pos = max(0, match.start() - 150)
-                end_pos = min(len(p_limpio), match.end() + 250)
-                return p_limpio[start_pos:end_pos].strip(), True
-
-        # 3. Fallback: Mantener el inicio del texto limpio
-        fallback = p_limpio[:max_chars].strip() if p_limpio.strip() else cuerpo[:max_chars].strip()
-        return fallback, False
-
-    @classmethod
-    def extraer_fragmento_relevante(
-        cls, titular: str, cuerpo: str, ticker_banco: str, max_chars: int = 400
-    ) -> str:
-        """Extrae el fragmento guiado donde el banco es mencionado."""
-        frag, _ = cls.extraer_fragmento_y_presencia(titular, cuerpo, ticker_banco, max_chars=max_chars)
-        return frag
-
-    @classmethod
-    def extraer_oraciones_banco(
-        cls, titular: str, cuerpo: str, ticker_banco: str, ventana_frases: int = 1
-    ) -> tuple[str, bool]:
-        """Extrae las oraciones completas donde se nombra al banco ± ventana_frases (diseñado para FinBERT).
+        """Extrae las oraciones limpias donde se menciona al banco (unificado para Categorizador y FinBERT).
 
         Args:
             titular: Titular del artículo.
             cuerpo: Texto completo del cuerpo de la noticia.
             ticker_banco: Ticker del banco (ej. 'JPM', 'GS').
-            ventana_frases: Número de frases adyacentes antes y después a incluir como contexto.
+            ventana_frases: Frases adyacentes antes y después a incluir (0 = foco estricto en la entidad).
+            incluir_titular: Si True, antepone el titular separado por `separador`.
+            separador: Separador entre titular y cuerpo extraído (por defecto ' [SEP] ' para FinBERT).
+            max_chars: Límite opcional de caracteres sobre el cuerpo extraído (útil para categorizador).
 
         Returns:
-            Tupla (texto_concatenado, localizado_en_cuerpo).
+            Tupla (texto_extraido, localizado_en_cuerpo).
         """
-        cuerpo_limpio = cuerpo.strip() if cuerpo else ""
+        cuerpo_limpio = cls.limpiar_boilerplate(cuerpo or "")
         if not cuerpo_limpio or cuerpo_limpio.lower() in ["none", "nan", ""] or cuerpo_limpio == titular.strip():
-            return titular.strip(), False
+            return (titular.strip() if incluir_titular else ""), False
 
-        # Segmentar en oraciones limpias
-        oraciones = [s.strip() for s in SENTENCE_SPLIT_REGEX.split(cuerpo_limpio) if s.strip()]
+        oraciones = [
+            s.strip()
+            for s in SENTENCE_SPLIT_REGEX.split(cuerpo_limpio)
+            if s.strip() and not any(bp in s.lower() for bp in BOILERPLATE_SECTOR_PATTERNS)
+        ]
         if not oraciones:
-            return titular.strip(), False
+            return (titular.strip() if incluir_titular else ""), False
 
         aliases = ALIAS_BANCOS.get(ticker_banco, [ticker_banco.lower()])
         pat_alias = re.compile(r"\b(" + "|".join(re.escape(a) for a in aliases) + r")\b", re.IGNORECASE)
 
-        # Localizar índices de oraciones que nombran al banco
-        indices_acierto = [i for i, s in enumerate(oraciones) if pat_alias.search(s)]
+        indices_acierto = [
+            i for i, s in enumerate(oraciones)
+            if pat_alias.search(s) or pat_alias.search(cls._normalizar_texto(s))
+        ]
 
         if not indices_acierto:
-            # Fallback: no se encontró al banco en el cuerpo -> Titular + primera oración / párrafo
-            fallback_text = f"{titular.strip()}. {oraciones[0]}" if oraciones else titular.strip()
-            return fallback_text, False
+            fallback = oraciones[0][:max_chars].strip() if max_chars is not None else oraciones[0]
+            if not incluir_titular:
+                return fallback, False
+            return (f"{titular.strip()}{separador}{fallback}" if fallback else titular.strip()), False
 
-        # Expandir la ventana de oraciones adyacentes (+/- ventana_frases)
         indices_expandidos: set[int] = set()
         for idx in indices_acierto:
             for offset in range(-ventana_frases, ventana_frases + 1):
@@ -142,10 +133,11 @@ class BaseProcesadorArticulo:
                 if 0 <= j < len(oraciones):
                     indices_expandidos.add(j)
 
-        oraciones_seleccionadas = [oraciones[i] for i in sorted(indices_expandidos)]
-        cuerpo_banco = " ".join(oraciones_seleccionadas)
-        texto_final = f"{titular.strip()}. {cuerpo_banco}"
+        cuerpo_banco = " ".join(oraciones[i] for i in sorted(indices_expandidos))
+        if max_chars is not None:
+            cuerpo_banco = cuerpo_banco[:max_chars].strip()
 
+        texto_final = f"{titular.strip()}{separador}{cuerpo_banco}" if incluir_titular else cuerpo_banco
         return texto_final, True
 
     @classmethod
