@@ -1,0 +1,334 @@
+🎯 El Desafío de Tokens en FinBERT
+FinBERT (ProsusAI/finbert o yiyanghkust/finbert-tone) está basado en la arquitectura BERT base, lo que impone un límite infranqueable de 512 tokens (incluyendo los tokens especiales [CLS] y [SEP]).
+En noticias financieras largas surgen dos problemas críticos:
+Truncamiento ciego (Head-only): Cortar en los primeros 512 tokens pierde conclusiones de mercado, cifras de cierre o párrafos posteriores.
+Dilución de sentimiento de la entidad (Entity sentiment dilution): Un artículo extenso puede describir un panorama macroeconómico o sectorial pesimista (generando un score negativo global en FinBERT), mientras que la acción o resultados del banco objeto de análisis (BAC, JPM, etc.) son positivos en su párrafo específico.
+A continuación se enumeran las herramientas y estrategias disponibles para recortar, segmentar y alimentar las noticias a FinBERT, organizadas según su enfoque técnico:
+🛠 1. Herramientas de Tokenización y Chunking Nativo (High Performance)
+A. Hugging Face AutoTokenizer (transformers)
+Qué hace: Es la herramienta nativa, directa y más eficiente. El tokenizador rápido (Fast Tokenizer en Rust) cuenta con el parámetro nativo return_overflowing_tokens=True y stride.
+Cómo funciona:
+inputs = tokenizer(
+    texto_largo,
+    max_length=512,
+    truncation=True,
+    stride=64,  # Solapamiento de 64 tokens entre ventanas
+    return_overflowing_tokens=True,
+    padding="max_length",
+    return_tensors="pt"
+)
+Ventajas: No requiere dependencias adicionales; maneja con precisión quirúrgica los subwords propios de FinBERT.
+Inconveniente: Si se generan 3 o 4 chunks por noticia, se multiplican las llamadas a inferencia del modelo y requiere una estrategia de agregación (pooling: media ponderada, max-pooling o atención hacia el banco).
+B. LangChain / LlamaIndex (RecursiveCharacterTextSplitter)
+Qué hace: Segmenta respetando separadores naturales (saltos de línea dobles, simples, puntos y espacios) antes de llegar a la longitud máxima de caracteres o tokens.
+Ventajas: Produce fragmentos con coherencia sintáctica completa (evita cortar palabras o entidades compuestas por la mitad).
+Inconveniente: Introduce dependencias pesadas si solo se requiere segmentar texto plano.
+🔍 2. Herramientas de Segmentación Lingüística y Ventana Focalizada (Entity-Centric Context)
+Esta es la filosofía que ya demostró mayor efectividad en la fase v2 del clasificador (src/articulos/models/categorizador.py). En lugar de procesar toda la crónica, se aísla el entorno sintáctico del banco.
+A. spaCy (en_core_web_sm)
+Qué hace: Su analizador sintáctico y de oraciones (Doc.sents) permite detectar con exactitud matemática los límites oracionales en inglés financiero.
+Estrategia: Extraer la oración donde aparece el banco (ticker o alias oficial de ALIAS_BANCOS) junto con la oración previa (causa/contexto) y la oración posterior (consecuencia/cifra).
+Consumo de tokens: Típicamente entre 80 y 160 tokens (encaja perfectamente en el límite sin truncar).
+Ventajas: Elimina completamente el ruido de competidores y comentarios sobre terceras acciones dentro de crónicas multi-empresa.
+B. NLTK (PunktSentenceTokenizer)
+Qué hace: Segmentador oracional ligero basado en reglas estadísticas no supervisadas.
+Ventajas: Mucho más ligero y rápido en arranque que un modelo spaCy completo. Ideal si se ejecuta en entornos con baja memoria RAM o CPU acotada.
+📊 3. Herramientas de Resumen Extractivo (Sin Alucinación)
+Para noticias extensas donde no se quiera perder la visión panorámica del artículo pero no se deba superar la cuota de tokens:
+A. sumy (TextRank / LexRank)
+Qué hace: Implementa algoritmos de grafos o reducción de dimensionalidad (LSA) para puntuar la relevancia de cada frase del artículo y seleccionar las N frases más informativas hasta alcanzar el presupuesto de tokens deseado (ej. 256 tokens).
+Ventajas: Extractivo puro: Cero riesgo de alucinación de cifras contables, porcentajes o distorsión de hechos (fundamental en finanzas).
+Inconveniente: No pondera específicamente la mención del banco a menos que se adapte el grafo con pesos personalizados.
+B. sentence-transformers (Extracción Semántica Guiada por Centroide)
+Qué hace: Aprovechar el modelo all-MiniLM-L6-v2 ya presente en el entorno del TFM.
+Estrategia: Se divide el artículo en oraciones, se obtienen los embeddings de cada frase y se calcula la similitud coseno contra el vector del titular o del banco. Se seleccionan las oraciones con mayor similitud semántica hasta llenar el cupo de 256 o 384 tokens.
+Ventajas: Reutiliza la infraestructura ya instalada sin añadir nuevas librerías.
+🚫 ¿Modelos de Resumen Abstractivo (BART / T5 / LLMs)?
+Herramientas: facebook/bart-large-cnn, google/flan-t5-base, o llamadas a APIs.
+Veredicto para este TFM: Desaconsejado.
+Añade una capa computacional enorme (un modelo pesado resumiendo para que otro clasifique).
+Riesgo severo de inversión de polaridad (ej. cambiar "Wells Fargo did not meet consensus expectations" por "Wells Fargo met consensus" por fallo de generación abstractiva).
+Inconsistente con el principio KISS.
+⚡ 4. Herramientas para la Inferencia y Cálculo del Índice de Sentimiento
+Una vez recortado el texto, para alimentar a FinBERT y calcular el índice continuo:
+
+Herramienta
+Caso de Uso Recomendado
+Características
+Hugging Face pipeline
+Prototipado rápido y scripts sencillos
+pipeline("sentiment-analysis", model="ProsusAI/finbert", device=..., batch_size=128) con truncation=True.
+PyTorch + DataLoader
+Pipeline ETL de producción local/servidor
+Inferencia matricial con torch.no_grad(), DataLoader por lotes (128/256) sobre arrays PyArrow en memoria.
+Hugging Face Optimum (ONNX Runtime)
+Máxima aceleración en CPU
+Exporta FinBERT a formato ONNX cuantizado (INT8), logrando aceleraciones de 3x a 5x en inferencia CPU, idóneo para procesar las 27.217 noticias en pocos minutos.
+
+Fórmula Estándar del Índice de Sentimiento
+A partir de las probabilidades de salida de FinBERT (P_pos, P_neg, P_neu):
+Score = P_positive - P_negative  ∈ [-1.0, +1.0]
+💡 Síntesis y Recomendación para Nuestro Dataset
+En df_util_v2.parquet, cada registro ya dispone de:
+title: Titular limpio de la noticia.
+process_text: Fragmento contextual extraído en origen alrededor de la entidad (máximo 400 caracteres ~ 70-100 palabras).
+La opción más simple, limpia y de mayor precisión (KISS & DRY):
+Composición de Entrada: Construir el input combinando titular y fragmento:
+Input = title + " — " + process_text
+Presupuesto de Tokens: Esta cadena tiene una media de 90 a 160 tokens, encajando de forma holgada en un límite de max_length=256 o max_length=512 de AutoTokenizer con truncation=True.
+Casos sin cuerpo: Para las noticias huérfanas legítimas (titular directo sin cuerpo), la entrada es simplemente el titular, preservando el 100% de la señal sin padding superfluo.
+
+Perplexity 
+
+La recomendación central es no usar sliding window sobre el cuerpo completo como estrategia por defecto: para tu dataset, el mejor equilibrio es inferencia dirigida sobre title + process_text, con una segunda pasada de sliding window solo para los artículos largos donde exista cuerpo completo y varias menciones del banco. FinBERT devuelve tres probabilidades softmax —positive, negative y neutral—, lo que permite construir un índice continuo robusto sin transformaciones ad hoc.huggingface+1
+Decisión de diseño
+Tu problema no es principalmente “cómo meter 27.200 textos en FinBERT”, sino qué texto representa el sentimiento de la entidad. Un titular y una ventana de 400 caracteres centrada en la mención ya contienen la mayor parte de la señal relevante; procesar todo el artículo introduce ruido macro, sectorial y de mercado que puede contaminar el score del banco.
+Decisión
+Recomendación para tu TFM
+Unidad de inferencia
+title + process_text, concatenados con separador [SEP]
+Casos con cuerpo largo y varias menciones
+Segmentación por oraciones/ventanas centradas en cada mención
+Truncamiento
+Nunca head-only para artículos largos con cuerpo; prioriza titular, primer párrafo y oraciones alrededor de la entidad
+Agregación
+Ponderación por cercanía sintáctica/posicional a la mención del banco
+Motor de inferencia
+PyTorch + DataLoader para prototipo; Optimum + ONNX Runtime para la ejecución completa
+Cuantización
+Dynamic INT8 solo en CPU; validar contra FP32 antes de fijar el pipeline
+
+1. Estrategias de clipping y chunking
+Inferencia directa sobre title + process_text
+Esta debe ser tu línea base y opción principal. El campo process_text ya implementa, en esencia, una extracción de contexto dirigida a la entidad: evita diluir el sentimiento del banco con el tono general de una crónica y reduce el coste de inferencia.
+Concatena: title + " [SEP] " + process_text.
+Tokeniza con truncation=True, max_length=512, padding="longest" o padding dinámico por batch.
+No apliques truncamiento ciego: el titular debe ir siempre al principio y la ventana contextual inmediatamente después.
+Para noticias huérfanas etiquetadas como "(Titular directo sin cuerpo)", usa únicamente el titular; es una entrada legítima, pero conviene marcarla con una variable de calidad, por ejemplo has_body_context = 0.
+Ventaja: máxima trazabilidad, bajo coste y menor riesgo de que un titular macro negativo contamine una noticia específicamente alcista para JPM o BAC.
+Limitación: una ventana de 400 caracteres puede perder antecedentes relevantes, especialmente en noticias legales, crediticias o de M&A donde la causa del sentimiento aparece varias oraciones antes o después de la mención.
+Sliding window con solapamiento
+El sliding window es útil solo cuando dispones del cuerpo completo y el artículo es largo. Divide el texto en ventanas de aproximadamente 380–450 tokens con un stride de 100–200 tokens, de modo que ninguna oración relevante quede cortada por la frontera.
+chunk_size: 400–450 tokens.
+stride: 100–200 tokens; un solape del 25–50% es suficiente.
+Conserva siempre el titular en cada chunk: title + " [SEP] " + chunk.
+Ejecuta FinBERT en cada chunk y agrega los resultados.
+No recomiendo la media simple de chunks. Una media trata igual una oración incidental y un párrafo que explica directamente el resultado trimestral, una sanción o una adquisición. Usa una agregación ponderada.
+Una formulación práctica es:
+Sdoc=∑iwiSi∑iwiS_{\text{doc}}=\frac{\sum_i w_i S_i}{\sum_i w_i}Sdoc​=∑i​wi​∑i​wi​Si​​
+donde SiS_iSi​ es el índice continuo del chunk iii y wiw_iwi​ pondera la relevancia de la entidad. Una ponderación razonable es:
+wi=α⋅1[menciona el ticker]+β⋅11+di+γ⋅1[chunk inicial]w_i = \alpha \cdot \mathbb{1}[\text{menciona el ticker}] + \beta \cdot \frac{1}{1+d_i} + \gamma \cdot \mathbb{1}[\text{chunk inicial}]wi​=α⋅1[menciona el ticker]+β⋅1+di​1​+γ⋅1[chunk inicial]
+con:
+did_idi​: distancia media, en tokens u oraciones, entre el chunk y la mención más cercana del banco.
+α\alphaα: peso alto para chunks con mención explícita del ticker o nombre completo.
+β\betaβ: decaimiento por cercanía.
+γ\gammaγ: peso pequeño para el primer chunk, porque los titulares y leads suelen resumir la noticia.
+Para una implementación defendible y sencilla, usa por ejemplo:
+Chunk con mención del banco: peso 3.
+Chunk sin mención pero adyacente a una mención: peso 1.5.
+Chunk sin mención y no adyacente: peso 0.5.
+Primer chunk: multiplicar el peso por 1.25.
+Evita max-pooling como agregador principal: captura el extremo emocional del artículo, pero es sensible a frases aisladas, titulares sensacionalistas o menciones de riesgo genérico. Puede conservarse como feature secundaria, por ejemplo max_negative_score o max_positive_score, pero no como índice principal.
+Contexto sintáctico centrado en la entidad
+Esta es la mejora de mayor retorno sobre tu línea base. En vez de recortar mecánicamente 400 caracteres, extrae un contexto por oración y por dependencia sintáctica alrededor de cada mención del banco.
+Con spaCy:
+Detecta menciones del banco mediante reglas y normalización: JPMorgan, JPMorgan Chase, JPM, Bank of America, BofA, Wells Fargo, Citigroup, Citi, Goldman Sachs, Morgan Stanley, además de variantes con mayúsculas y guiones.
+Para cada mención, selecciona la oración que la contiene.
+Añade una o dos oraciones previas y posteriores, priorizando oraciones conectadas por dependencias de sujeto-objeto, causa, modificación nominal o coordinación.
+Genera una lista de entity spans; cada uno se puntúa por FinBERT.
+Agrega con pesos por cercanía y presencia de la entidad.
+Esto resuelve directamente la dilución de entidad: “el sector bancario cae ante temores macroeconómicos, aunque JPMorgan superó las expectativas de beneficios” no debería recibir necesariamente el mismo score que una noticia puramente bajista sobre JPM.
+Recomendación: spaCy es preferible a NLTK para producción porque ofrece un pipeline eficiente de tokenización, POS tagging, dependencias y NER; NLTK es útil para prototipado o reglas sencillas, pero requiere más integración manual.
+Resumen extractivo no generativo
+TextRank/LexRank con sumy, o selección de oraciones por similitud con sentence-transformers, puede servir como compresor de respaldo para artículos muy largos. La idea es seleccionar las 3–6 oraciones más salientes, con sesgo hacia las que mencionan al banco, y enviarlas a FinBERT.
+TextRank/LexRank: rápido, determinista y sin riesgo de alucinación; adecuado como preselección.
+Sentence-transformers por saliencia: permite seleccionar oraciones cercanas semánticamente al titular, a la etiqueta de categoría o a una consulta como “resultado financiero de JPMorgan”.
+Mejor uso: no como sustituto de process_text, sino para artículos con cuerpo completo y más de una mención.
+Riesgo importante: un resumen extractivo puede omitir cifras, fechas, condiciones o matices legales. Por ello, conserva siempre el texto original y registra qué oraciones fueron seleccionadas.
+Resúmenes abstractivos y LLMs
+Descártalos para la inferencia masiva del TFM. BART, T5 y LLMs pueden parafrasear o reinterpretar cifras, condiciones, negaciones y temporalidad. En un corpus financiero, una alucinación no solo degrada el sentimiento: puede alterar la interpretación de beneficios, provisiones, litigios, capital o adquisiciones.
+Además, añaden coste, latencia, dependencia de proveedores y problemas de reproducibilidad. Para 27.200 noticias, no compensan frente a una extracción determinista de contexto.
+Excepción razonable: usar un LLM en una muestra pequeña y estratificada para auditar la calidad de process_text, detectar menciones mal asignadas o validar manualmente casos límite. No como etapa obligatoria del pipeline principal.
+2. Inferencia y escalabilidad
+Enfoque
+Cuándo usarlo
+Latencia / coste
+Calidad
+Complejidad
+transformers.pipeline
+Prototipo, pocas miles de filas
+Alta; overhead por llamada y batching limitado
+Alta
+Muy baja
+PyTorch + DataLoader
+Prototipo serio y validación
+Buena con batching y GPU
+Alta
+Baja-media
+Optimum + ONNX Runtime
+Corpus completo, CPU o GPU
+Muy buena; fusiones de grafo y ejecución optimizada
+Alta, sujeta a validación
+Media
+ONNX Runtime INT8 dinámico
+CPU estándar
+Mejor throughput CPU
+Puede variar; requiere evaluación
+Media
+ONNX Runtime FP16
+GPU compatible
+Muy buena
+Generalmente estable
+Media
+ONNX Runtime INT8 estático
+CPU con calibración representativa
+Excelente throughput
+Requiere calibración y validación
+Alta
+
+FinBERT es un clasificador de tres clases y puede ejecutarse con pipeline("text-classification", model="ProsusAI/finbert"); para obtener las tres probabilidades, hay que usar top_k=None.huggingface+1
+Recomendación práctica
+Fase 1 — prototipo: PyTorch puro con AutoTokenizer, AutoModelForSequenceClassification, DataLoader, torch.no_grad(), batching y pin_memory=True si usas GPU.
+Fase 2 — producción del TFM: exporta FinBERT a ONNX con Optimum y ejecútalo con ONNX Runtime.
+Fase 3 — CPU: aplica dynamic INT8 quantization, no estática, porque evita el paso de calibración y suele ser suficiente para BERT-like en inferencia.
+Fase 4 — validación: compara predicciones FP32 PyTorch frente a ONNX FP32 e INT8 en una muestra estratificada por ticker, categoría, longitud y presencia de cuerpo.
+Optimum permite exportar modelos de Hugging Face a ONNX, optimizar el grafo y cuantizar mediante ORTQuantizer; la documentación distingue explícitamente optimización y cuantización, y contempla cuantización dinámica y estática.huggingface+2
+Para BERT, las optimizaciones específicas de transformers incluyen fusiones de atención y GELU; la documentación indica que la fusión de atención está diseñada para padding por la derecha en arquitecturas BERT-like.huggingface+1
+Configuración recomendada
+max_length: 256 para title + process_text; 384–448 solo para chunks de artículos largos.
+batch_size: 32–64 en GPU; 8–32 en CPU, ajustado a memoria.
+Padding dinámico por batch, no padding fijo a 512.
+Ordena o agrupa por longitud aproximada para reducir padding, sin alterar el orden original del dataset.
+Guarda por fila: probabilidades, score continuo, número de chunks, número de menciones, longitud en tokens, etiqueta de calidad y versión del modelo.
+No cuantices antes de validar. INT8 puede acelerar CPU, pero en un TFM la reproducibilidad y la estabilidad del índice importan más que el último 20–30% de velocidad.
+3. Índice de sentimiento continuo
+FinBERT entrega probabilidades softmax para positive, negative y neutral.huggingface+1
+Fórmula recomendada: signed net sentiment
+Sentiment=P(positive)−P(negative)\text{Sentiment} = P(\text{positive}) - P(\text{negative})Sentiment=P(positive)−P(negative)
+El rango es [−1,+1][-1,+1][−1,+1]:
++1+1+1: probabilidad 1 en positivo.
+−1-1−1: probabilidad 1 en negativo.
+0: neutralidad o equilibrio entre positivo y negativo.
+Es la opción más adecuada para series temporales financieras porque:
+Conserva la neutralidad como información, en lugar de forzar una polaridad.
+Es simétrico y fácil de interpretar.
+Permite construir índices diarios mediante medias, medianas o agregación ponderada.
+Evita la pérdida de información de fórmulas del tipo P(pos) / (P(pos)+P(neg)), que colapsa casos neutros.
+Alternativa: intensidad polar
+Polarity=P(positive)−P(negative)\text{Polarity} = P(\text{positive}) - P(\text{negative})Polarity=P(positive)−P(negative)
+Intensity=P(positive)+P(negative)\text{Intensity} = P(\text{positive}) + P(\text{negative})Intensity=P(positive)+P(negative)
+Confidence=1−P(neutral)\text{Confidence} = 1 - P(\text{neutral})Confidence=1−P(neutral)
+Esta descomposición es muy útil para tu análisis: no solo mides dirección, sino también certeza. Una noticia con P(pos)=0.55, P(neg)=0.05, P(neu)=0.40 tiene un score de +0.50, pero menor confianza que una con P(pos)=0.90, P(neg)=0.05, P(neu)=0.05.
+Agregación diaria por banco
+Para construir una serie temporal, agrega por ticker y fecha de publicación:
+Indexb,t=∑i∈Nb,tqi⋅ni⋅Si∑i∈Nb,tqi⋅ni\text{Index}_{b,t}=\frac{\sum_{i \in N_{b,t}} q_i \cdot n_i \cdot S_i}{\sum_{i \in N_{b,t}} q_i \cdot n_i}Indexb,t​=∑i∈Nb,t​​qi​⋅ni​∑i∈Nb,t​​qi​⋅ni​⋅Si​​
+donde:
+SiS_iSi​: score continuo de la noticia.
+nin_ini​: número de menciones del banco o peso de cercanía de entidad.
+qiq_iqi​: factor de calidad, por ejemplo 1.0 si hay cuerpo contextual, 0.7 si es titular huérfano.
+Nb,tN_{b,t}Nb,t​: noticias del banco bbb en el día ttt.
+No uses medias no ponderadas por defecto. Una noticia flash poco informativa puede dominar una jornada con pocas publicaciones. Considera también mediana o trimmed mean como robustez frente a outliers.
+4. Matriz comparativa
+Estrategia
+Precisión entity-level
+Complejidad
+Latencia / coste
+Riesgo de alucinación o distorsión
+Veredicto
+title + process_text directo
+Alta
+Muy baja
+Muy baja
+Muy bajo
+Base obligatoria
+Sliding window + media simple
+Baja-media
+Baja
+Alta
+Bajo, pero diluye entidad
+Descartar como agregador
+Sliding window + ponderación por entidad
+Alta
+Media
+Alta
+Bajo
+Usar solo en artículos largos
+Contexto sintáctico con spaCy
+Muy alta
+Media-alta
+Media
+Muy bajo
+Mejora principal
+Extractivo TextRank/LexRank
+Media-alta
+Media
+Baja-media
+Bajo, pero puede omitir detalles
+Respaldo para textos largos
+Saliencia con sentence-transformers
+Alta
+Media
+Media
+Bajo
+Complemento útil
+BART/T5 abstractivo
+Variable
+Alta
+Alta
+Alto
+Evitar en producción
+LLM generativo
+Variable
+Alta
+Muy alta
+Alto
+Solo auditoría manual
+pipeline Hugging Face
+Alta
+Muy baja
+Alta
+Bajo
+Prototipo
+PyTorch + DataLoader
+Alta
+Baja-media
+Buena
+Bajo
+Validación y baseline
+Optimum + ONNX Runtime
+Alta, si se valida
+Media
+Muy buena
+Bajo
+Producción recomendada
+ONNX INT8 dinámico
+Alta tras validación
+Media
+Excelente en CPU
+Bajo-moderado
+CPU estándar
+ONNX INT8 estático
+Alta si calibras bien
+Alta
+Excelente
+Moderado
+Solo si el speedup justifica el esfuerzo
+
+Pipeline recomendado
+Normaliza y deduplica noticias por ticker, fecha, titular y hash del texto.
+Clasifica la calidad de entrada: titular directo, process_text, cuerpo completo disponible.
+Extrae menciones de entidad con reglas + spaCy; guarda posición, oración y distancia a otras menciones.
+Genera unidad de inferencia: title + process_text para la mayoría; para artículos largos, oraciones o ventanas centradas en la entidad.
+Ejecuta FinBERT con PyTorch para la muestra de validación y Optimum/ONNX Runtime para el corpus completo.
+Calcula P(pos) - P(neg) por unidad de inferencia.
+Agrega por noticia mediante media ponderada por cercanía de entidad; no media simple.
+Agrega por ticker-día con pesos de calidad, número de menciones y, opcionalmente, decaimiento temporal.
+Valida contra una muestra etiquetada manualmente y contra eventos financieros conocidos: resultados trimestrales, sanciones, adquisiciones, quiebras o cambios de guía.
+Recomendación final
+Para tu caso concreto, implementa un pipeline híbrido de dos niveles:
+Nivel 1, 90–95% del corpus: inferencia directa sobre title + process_text, tokenización a 256 tokens, FinBERT y score P(pos)−P(neg)P(pos)-P(neg)P(pos)−P(neg).
+Nivel 2, artículos largos con cuerpo completo: extracción de oraciones centradas en la entidad con spaCy; si el contexto sigue siendo insuficiente, sliding window con solapamiento y agregación ponderada por cercanía y mención.
+Motor: PyTorch para desarrollo y Optimum + ONNX Runtime, con dynamic INT8 en CPU si no dispones de GPU estable.
+Índice: P(positive)−P(negative)P(\text{positive}) - P(\text{negative})P(positive)−P(negative), con P(neutral) retenido como medida de confianza.
+Esta arquitectura prioriza el entity-level sentiment, evita el truncamiento ciego, mantiene el coste razonable para 27.200 noticias y minimiza el riesgo de que un resumen o LLM altere cifras contables. La evidencia disponible confirma que FinBERT es un clasificador financiero de tres clases y que Optimum/ONNX Runtime está diseñado precisamente para exportar, optimizar y cuantizar modelos de Hugging Face.
+
