@@ -1,35 +1,29 @@
 """
 ETL Job: Procesamiento y carga del dataset multisource para los 6 bancos (2010-2023).
 Extrae de los parquets locales, separa explícitamente en 'title' (titular) y 'article' (cuerpo),
-filtra falsos positivos léxicos en Citigroup ('C'), calcula el conteo de tickers asociados ('ticker_count'),
-normaliza, enriquece, deduplica y carga a Cloudflare R2 bajo 'raw/huggingface/multisource_bancos_2010_2023.parquet'.
+filtra falsos positivos léxicos en Citigroup ('C'), normaliza fechas a Wall Street (America/New_York),
+deduplica, calcula trazabilidad ('record_id', 'ticker_count') y carga a Cloudflare R2.
 """
 
 import asyncio
-
 from pathlib import Path
+
 import duckdb
+import numpy as np
 import pandas as pd
 
-
-
-
-
-
-
-
-
-from dependencies.dependencies import get_storage_repository, get_compactor
+from dependencies.dependencies import get_compactor, get_storage_repository
 from shared.ids import generar_record_id
 from shared.logging import Logger
+from shared.tickets import TICKETS
 
 logger = Logger("ETLMultisource")
-from shared.tickets import TICKETS
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "src" / "data" / "financial_news_multisource" / "data"
 LOCAL_OUTPUT = PROJECT_ROOT / "src" / "data" / "multisource_bancos_2010_2023.parquet"
 R2_OBJECT_KEY = "raw/huggingface/multisource_bancos_2010_2023.parquet"
+MARKET_TZ = "America/New_York"
 
 
 def extraer_title_y_article(raw_text: str) -> tuple[str, str]:
@@ -47,11 +41,49 @@ def extraer_title_y_article(raw_text: str) -> tuple[str, str]:
     return title, article
 
 
+def normalizar_fechas_ny(
+    df: pd.DataFrame,
+    source_col: str = "date",
+    preserve_utc_str_col: str | None = "_date_utc_id",
+) -> pd.DataFrame:
+    """Convierte timestamps UTC a hora de Wall Street (`America/New_York`) sin desplazar fechas `00:00:00`.
+
+    Para registros con reloj real (`has_exact_time=True`), convierte de UTC a `America/New_York` y
+    clasifica `market_session` en `premarket`, `intraday` o `afterhours`. Para registros que solo
+    traen fecha (`00:00:00` en origen, ej. `fnspid_news`), conserva exactamente el día calendario
+    en `America/New_York` a las `00:00:00` y asigna `market_session="date_only"`.
+    """
+    out = df.copy()
+    raw_input = out["datetime"] if "datetime" in out.columns and source_col not in out.columns else out[source_col]
+    dt_utc = pd.to_datetime(raw_input, utc=True, errors="coerce")
+    out = out.loc[dt_utc.notna()].copy()
+    dt_utc = dt_utc.loc[out.index]
+
+    if preserve_utc_str_col:
+        out[preserve_utc_str_col] = dt_utc.dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    has_exact = ~((dt_utc.dt.hour == 0) & (dt_utc.dt.minute == 0) & (dt_utc.dt.second == 0))
+    dt_converted = dt_utc.dt.tz_convert(MARKET_TZ)
+    dt_midnight_ny = dt_utc.dt.tz_localize(None).dt.tz_localize(MARKET_TZ)
+    dt_ny = dt_converted.where(has_exact, dt_midnight_ny)
+
+    mins_ny = dt_ny.dt.hour * 60 + dt_ny.dt.minute
+    market_session = np.where(
+        ~has_exact,
+        "date_only",
+        np.where(mins_ny < 570, "premarket", np.where(mins_ny < 960, "intraday", "afterhours")),
+    )
+
+    out["datetime"] = dt_ny
+    out["date"] = dt_ny.dt.strftime("%Y-%m-%d %H:%M:%S")
+    out["has_exact_time"] = has_exact.astype(bool)
+    out["market_session"] = market_session
+    return out
+
+
 def extract_and_transform() -> pd.DataFrame:
-    """Extrae datos con DuckDB aplicando filtros de fecha y tickers."""
-    
+    """Extrae datos con DuckDB aplicando filtros de fecha, tickers y normalización horaria ET."""
     logger.info("1. Iniciando extracción y transformación con DuckDB...")
-    
 
     con = duckdb.connect()
     tickers = list(TICKETS.keys())
@@ -59,7 +91,7 @@ def extract_and_transform() -> pd.DataFrame:
 
     query = f"""
     WITH fnspid AS (
-        SELECT 
+        SELECT
             'fnspid_news' AS source_dataset,
             date,
             text,
@@ -75,7 +107,7 @@ def extract_and_transform() -> pd.DataFrame:
           )
     ),
     benzinga AS (
-        SELECT 
+        SELECT
             'benzinga_6000stocks' AS source_dataset,
             date,
             text,
@@ -91,7 +123,7 @@ def extract_and_transform() -> pd.DataFrame:
           )
     ),
     sentarl AS (
-        SELECT 
+        SELECT
             'sentarl_combined' AS source_dataset,
             date,
             text,
@@ -107,7 +139,7 @@ def extract_and_transform() -> pd.DataFrame:
           )
     ),
     yahoo_felix AS (
-        SELECT 
+        SELECT
             'yahoo_finance_felixdrinkall' AS source_dataset,
             date,
             text,
@@ -131,7 +163,7 @@ def extract_and_transform() -> pd.DataFrame:
         UNION ALL
         SELECT * FROM yahoo_felix
     )
-    SELECT 
+    SELECT
         ticker,
         date,
         source_dataset,
@@ -154,10 +186,8 @@ def extract_and_transform() -> pd.DataFrame:
     df["company_name"] = df["ticker"].map(lambda t: TICKETS.get(t, {}).get("name", ""))
     df["cik"] = df["ticker"].map(lambda t: TICKETS.get(t, {}).get("cik", ""))
 
-    # Normalizar fechas a Timestamp UTC
-    df["datetime"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
-    df = df.dropna(subset=["datetime"]).copy()
-    df["date"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    # Normalizar fechas a Wall Street (America/New_York) preservando fecha UTC para record_id estable
+    df = normalizar_fechas_ny(df, source_col="date", preserve_utc_str_col="_date_utc_id")
 
     # Separación explícita en 'title' (titular) y 'article' (cuerpo)
     logger.info("Separando textos en 'title' (titular) y 'article' (cuerpo extenso)...")
@@ -172,11 +202,12 @@ def extract_and_transform() -> pd.DataFrame:
     logger.info(f"Duplicados eliminados: {eliminados:,} ({eliminados / antes_dedup * 100:.2f}%)")
 
     # Filtrar falsos positivos de Citigroup ('C')
-    # Descartar registros de 'C' que no contengan 'citi' en el titular ni en el cuerpo del texto
     antes_citi = len(df)
-    es_basura_citi = (df["ticker"] == "C") & \
-                     (~df["title"].str.contains("citi", case=False, na=False)) & \
-                     (~df["text"].str.contains("citi", case=False, na=False))
+    es_basura_citi = (
+        (df["ticker"] == "C")
+        & (~df["title"].str.contains("citi", case=False, na=False))
+        & (~df["text"].str.contains("citi", case=False, na=False))
+    )
     df = df[~es_basura_citi].reset_index(drop=True)
     eliminados_citi = antes_citi - len(df)
     logger.info(f"Falsos positivos de Citigroup ('C') eliminados: {eliminados_citi:,}")
@@ -185,10 +216,10 @@ def extract_and_transform() -> pd.DataFrame:
     df["ticker_count"] = df.groupby(["title", "datetime"])["ticker"].transform("nunique")
     df["is_multisubject"] = df["ticker_count"] > 1
 
-    # Identificador determinista de trazabilidad Bronze -> Silver -> Gold
+    # Identificador determinista estable usando la cadena UTC original para no invalidar IDs históricos
     df["record_id"] = [
         generar_record_id(str(t), str(d), str(tit))
-        for t, d, tit in zip(df["ticker"], df["date"], df["title"])
+        for t, d, tit in zip(df["ticker"], df["_date_utc_id"], df["title"])
     ]
 
     logger.info(f"Total registros limpios consolidados: {len(df):,}")
@@ -206,6 +237,8 @@ def extract_and_transform() -> pd.DataFrame:
         "cik",
         "date",
         "datetime",
+        "has_exact_time",
+        "market_session",
         "title",
         "article",
         "text",
@@ -213,15 +246,13 @@ def extract_and_transform() -> pd.DataFrame:
         "url",
         "source_dataset",
         "ticker_count",
-        "is_multisubject"
+        "is_multisubject",
     ]
     df = df[columnas_finales]
 
-    
     logger.info("Distribución por banco:\n" + df["ticker"].value_counts().to_string())
 
     df["year"] = df["datetime"].dt.year
-    
     logger.info("Distribución anual (2010 - 2023):\n" + pd.crosstab(df["year"], df["ticker"]).to_string())
     df = df.drop(columns=["year"])
 
@@ -243,22 +274,17 @@ def save_and_upload(df: pd.DataFrame) -> None:
     logger.info(f"Archivo local generado exitosamente: {file_size_mb:.2f} MB")
 
     # 2. Conectar a S3/R2 mediante el repositorio centralizado de infraestructura
-    logger.info(f"Conectando a R2 mediante repositorio - Destino: {R2_OBJECT_KEY}")
-    storage = get_storage_repository()
-
-    logger.info("Subiendo archivo Parquet a R2...")
+    repo = get_storage_repository()
+    logger.info(f"Subiendo dataset consolidado al bucket [{repo.bucket_name}] -> '{R2_OBJECT_KEY}'...")
 
     async def _upload() -> None:
         try:
-            await storage.save(key=R2_OBJECT_KEY, body=parquet_bytes)
-            logger.info("Subida a R2 completada con éxito.")
+            await repo.save(key=R2_OBJECT_KEY, body=parquet_bytes)
+            logger.info(f"Dataset subido a R2 exitosamente ({file_size_mb:.2f} MB).")
         finally:
-            await storage.close()
+            await repo.close()
 
     asyncio.run(_upload())
-    logger.info("Subida a R2 completada con éxito.")
-
-    logger.info("ETL completada satisfactoriamente.")
 
 
 if __name__ == "__main__":
