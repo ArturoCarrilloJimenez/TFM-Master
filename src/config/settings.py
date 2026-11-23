@@ -24,6 +24,19 @@ class Settings(BaseSettings):
     scraper_basic_auth_user: str = ""
     scraper_basic_auth_password: str = ""
 
+    # Anthropic (Claude)
+    anthropic_api_key: str = ""
+    claude_model_default: str = "claude-haiku-5-5"
+    anthropic_api_version: str = "2023-06-01"
+    anthropic_prompt_version: str = "v1_en"
+    anthropic_batch_size: int = 10
+
+    # OpenAI (ChatGPT), Gemini API (Google AI Studio) & xAI (Grok) APIs (opcionales para benchmark)
+    openai_api_key: str = ""
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.1-flash-lite"
+    xai_api_key: str = ""
+
     # Se usa model_config con SettingsConfigDict
     model_config = SettingsConfigDict(
         env_file=(_ROOT_DIR / ".env", ".env"),

@@ -76,6 +76,20 @@ class BaseProcesadorArticulo:
         return out.strip()
 
     @classmethod
+    def menciona_banco(cls, texto: str, ticker_banco: str) -> bool:
+        """Verifica si el texto contiene algún alias del banco (incluyendo normalización sin puntos)."""
+        if not texto:
+            return False
+        aliases = ALIAS_BANCOS.get(ticker_banco, [ticker_banco.lower()])
+        pat_alias = re.compile(r"\b(" + "|".join(re.escape(a) for a in aliases) + r")\b", re.IGNORECASE)
+        return bool(pat_alias.search(texto) or pat_alias.search(cls._normalizar_texto(texto)))
+
+    @classmethod
+    def contar_bancos_mencionados(cls, texto: str) -> int:
+        """Cuenta cuántos bancos distintos de ALIAS_BANCOS aparecen mencionados en el texto."""
+        return sum(1 for tk in ALIAS_BANCOS if cls.menciona_banco(texto, tk))
+
+    @classmethod
     def extraer_contexto_banco(
         cls,
         titular: str,
@@ -85,6 +99,8 @@ class BaseProcesadorArticulo:
         incluir_titular: bool = True,
         separador: str = " [SEP] ",
         max_chars: int | None = None,
+        titular_condicional: bool = False,
+        ventana_auto_multiticker: bool = False,
     ) -> tuple[str, bool]:
         """Extrae las oraciones limpias donde se menciona al banco (unificado para Categorizador y FinBERT).
 
@@ -96,6 +112,8 @@ class BaseProcesadorArticulo:
             incluir_titular: Si True, antepone el titular separado por `separador`.
             separador: Separador entre titular y cuerpo extraído (por defecto ' [SEP] ' para FinBERT).
             max_chars: Límite opcional de caracteres sobre el cuerpo extraído (útil para categorizador).
+            titular_condicional: Si True, solo incluye el titular cuando este menciona al banco objetivo.
+            ventana_auto_multiticker: Si True, aplica ventana ±1 en noticias mono-ticker y ventana 0 en multi-ticker.
 
         Returns:
             Tupla (texto_extraido, localizado_en_cuerpo).
@@ -112,13 +130,7 @@ class BaseProcesadorArticulo:
         if not oraciones:
             return (titular.strip() if incluir_titular else ""), False
 
-        aliases = ALIAS_BANCOS.get(ticker_banco, [ticker_banco.lower()])
-        pat_alias = re.compile(r"\b(" + "|".join(re.escape(a) for a in aliases) + r")\b", re.IGNORECASE)
-
-        indices_acierto = [
-            i for i, s in enumerate(oraciones)
-            if pat_alias.search(s) or pat_alias.search(cls._normalizar_texto(s))
-        ]
+        indices_acierto = [i for i, s in enumerate(oraciones) if cls.menciona_banco(s, ticker_banco)]
 
         if not indices_acierto:
             fallback = oraciones[0][:max_chars].strip() if max_chars is not None else oraciones[0]
@@ -126,19 +138,58 @@ class BaseProcesadorArticulo:
                 return fallback, False
             return (f"{titular.strip()}{separador}{fallback}" if fallback else titular.strip()), False
 
+        ventana_eff = ventana_frases
+        if ventana_auto_multiticker:
+            es_mono = cls.contar_bancos_mencionados(f"{titular} {cuerpo_limpio}") <= 1
+            ventana_eff = 1 if es_mono else 0
+
         indices_expandidos: set[int] = set()
         for idx in indices_acierto:
-            for offset in range(-ventana_frases, ventana_frases + 1):
+            for offset in range(-ventana_eff, ventana_eff + 1):
                 j = idx + offset
                 if 0 <= j < len(oraciones):
+                    # Si es frase vecina en modo adaptativo, descartar si menciona a un banco competidor
+                    if j != idx and ventana_auto_multiticker:
+                        if any(cls.menciona_banco(oraciones[j], k) for k in ALIAS_BANCOS if k != ticker_banco):
+                            continue
                     indices_expandidos.add(j)
 
         cuerpo_banco = " ".join(oraciones[i] for i in sorted(indices_expandidos))
         if max_chars is not None:
             cuerpo_banco = cuerpo_banco[:max_chars].strip()
 
-        texto_final = f"{titular.strip()}{separador}{cuerpo_banco}" if incluir_titular else cuerpo_banco
+        usar_titular = incluir_titular and (not titular_condicional or cls.menciona_banco(titular, ticker_banco))
+        texto_final = f"{titular.strip()}{separador}{cuerpo_banco}" if usar_titular else cuerpo_banco
         return texto_final, True
+
+    @classmethod
+    def extraer_frases_banco(
+        cls,
+        titular: str,
+        cuerpo: str,
+        ticker_banco: str,
+        titular_condicional: bool = True,
+    ) -> list[str]:
+        """Extrae la lista de oraciones individuales referidas al banco para inferencia frase a frase en FinBERT."""
+        cuerpo_limpio = cls.limpiar_boilerplate(cuerpo or "")
+        oraciones = [
+            s.strip()
+            for s in SENTENCE_SPLIT_REGEX.split(cuerpo_limpio)
+            if s.strip() and not any(bp in s.lower() for bp in BOILERPLATE_SECTOR_PATTERNS)
+        ] if cuerpo_limpio else []
+
+        hits = [s for s in oraciones if cls.menciona_banco(s, ticker_banco)]
+        frases: list[str] = []
+        if titular.strip() and (not titular_condicional or cls.menciona_banco(titular, ticker_banco)):
+            frases.append(titular.strip())
+        frases.extend(hits)
+
+        if not frases:
+            if titular.strip():
+                frases.append(titular.strip())
+            if oraciones:
+                frases.append(oraciones[0])
+        return frases
 
     @classmethod
     def es_rol_analista_tercero(cls, titular: str, cuerpo: str, ticker_banco: str) -> bool:

@@ -42,9 +42,10 @@ Additional paragraph with detailed quotes from the CEO."""
 def test_extract_and_transform_pipeline():
     """Valida el filtrado, deduplicación, filtro de falsos positivos de C y mapeo canónico de TICKETS."""
     mock_raw_data = pd.DataFrame([
+        # Noticia sin reloj real (00:00:00 -> date_only en ET, sin retroceder de día)
         {
             "ticker": "JPM",
-            "date": "2020-05-15 10:00:00",
+            "date": "2020-05-15 00:00:00",
             "source_dataset": "fnspid_news",
             "publisher": "Reuters",
             "text": "JPM Headline\nFull article content for JPMorgan Chase.",
@@ -53,7 +54,7 @@ def test_extract_and_transform_pipeline():
         # Registro duplicado exacto
         {
             "ticker": "JPM",
-            "date": "2020-05-15 10:00:00",
+            "date": "2020-05-15 00:00:00",
             "source_dataset": "fnspid_news",
             "publisher": "Reuters",
             "text": "JPM Headline\nFull article content for JPMorgan Chase.",
@@ -68,7 +69,7 @@ def test_extract_and_transform_pipeline():
             "text": "BAC headline without body",
             "url": "http://bac.com/news/2"
         },
-        # Noticia solo titular
+        # Noticia solo titular con reloj real UTC (14:30 UTC -> 10:30 EDT = intraday)
         {
             "ticker": "WFC",
             "date": "2021-08-20 14:30:00",
@@ -86,10 +87,10 @@ def test_extract_and_transform_pipeline():
             "text": "Antarctica turning green as climate change takes hold\nSome climate study text.",
             "url": "http://yahoo.com/c/fake"
         },
-        # Noticia válida de Citigroup ('C' con 'Citi' en el texto)
+        # Noticia válida de Citigroup ('C' con 'Citi' en el texto; 22:00 UTC -> 17:00 EST = afterhours)
         {
             "ticker": "C",
-            "date": "2022-01-05 15:00:00",
+            "date": "2022-01-05 22:00:00",
             "source_dataset": "yahoo_finance_felixdrinkall",
             "publisher": "Yahoo Finance",
             "text": "Citigroup Announces Executive Reshuffle\nCiti names new head of banking.",
@@ -107,29 +108,40 @@ def test_extract_and_transform_pipeline():
     assert len(df_result) == 3
     assert set(df_result["ticker"]) == {"JPM", "WFC", "C"}
 
-    # Verificar enriquecimiento con TICKETS
+    # Verificar enriquecimiento con TICKETS y conservación de fecha 00:00:00
     jpm_row = df_result[df_result["ticker"] == "JPM"].iloc[0]
     assert jpm_row["company_name"] == "JPMorgan Chase & Co."
     assert jpm_row["cik"] == "CIK0000019617"
     assert jpm_row["title"] == "JPM Headline"
     assert jpm_row["article"] == "Full article content for JPMorgan Chase."
+    assert jpm_row["date"] == "2020-05-15 00:00:00"
+    assert not bool(jpm_row["has_exact_time"])
+    assert jpm_row["market_session"] == "date_only"
 
     c_row = df_result[df_result["ticker"] == "C"].iloc[0]
     assert c_row["company_name"] == "Citigroup Inc."
     assert c_row["title"] == "Citigroup Announces Executive Reshuffle"
+    assert c_row["date"] == "2022-01-05 17:00:00"
+    assert bool(c_row["has_exact_time"])
+    assert c_row["market_session"] == "afterhours"
 
     wfc_row = df_result[df_result["ticker"] == "WFC"].iloc[0]
     assert wfc_row["company_name"] == "Wells Fargo & Company/MN"
     assert wfc_row["title"] == "Wells Fargo Declares Regular Dividend"
     assert wfc_row["article"] == ""
+    assert wfc_row["date"] == "2021-08-20 10:30:00"
+    assert wfc_row["market_session"] == "intraday"
 
-    # Verificar columnas finales esperadas incluyendo ticker_count e is_multisubject
+    # Verificar columnas finales esperadas incluyendo record_id, zona horaria ET y multisujeto
     columnas_esperadas = [
-        "ticker", "company_name", "cik", "date", "datetime",
+        "record_id",
+        "ticker", "company_name", "cik", "date", "datetime", "has_exact_time", "market_session",
         "title", "article", "text", "publisher", "url", "source_dataset",
         "ticker_count", "is_multisubject"
     ]
     assert list(df_result.columns) == columnas_esperadas
+    assert df_result["record_id"].nunique() == len(df_result)
+    assert (df_result["record_id"].str.len() == 24).all()
     assert (df_result["ticker_count"] == 1).all()
     assert (~df_result["is_multisubject"]).all()
 

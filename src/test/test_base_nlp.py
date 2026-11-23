@@ -104,3 +104,45 @@ def test_extraer_contexto_banco_sin_cuerpo():
 
     assert localizado is False
     assert texto_extraido == titular
+
+
+def test_extraer_contexto_banco_titular_condicional_y_adaptativo():
+    """Verifica el gating condicional del titular, la ventana adaptativa mono/multi-ticker y extraer_frases_banco."""
+    titular_ajeno = "Financial ETFs Down on Mixed Sector Earnings"
+    cuerpo_mono = (
+        "Broader markets opened lower. "
+        "Wells Fargo fourth-quarter earnings per share of 67 cents outpaced the consensus estimate. "
+        "The lender also reported higher net interest income."
+    )
+    # 1. Titular condicional: omite el titular porque no menciona a WFC; ventana adaptativa usa ±1 por ser mono-ticker
+    txt_adapt, loc = BaseProcesadorArticulo.extraer_contexto_banco(
+        titular=titular_ajeno,
+        cuerpo=cuerpo_mono,
+        ticker_banco="WFC",
+        titular_condicional=True,
+        ventana_auto_multiticker=True,
+    )
+    assert loc is True
+    assert titular_ajeno not in txt_adapt
+    assert "Wells Fargo fourth-quarter earnings" in txt_adapt
+    assert "The lender also reported higher net interest income." in txt_adapt
+
+    # 2. En noticia multi-ticker, ventana_auto_multiticker fuerza ventana 0
+    cuerpo_multi = (
+        "Citigroup shares fell 4% after weak trading results. "
+        "Wells Fargo fourth-quarter earnings per share of 67 cents outpaced the consensus estimate."
+    )
+    txt_multi, _ = BaseProcesadorArticulo.extraer_contexto_banco(
+        titular=titular_ajeno,
+        cuerpo=cuerpo_multi,
+        ticker_banco="WFC",
+        titular_condicional=True,
+        ventana_auto_multiticker=True,
+    )
+    assert "Citigroup shares fell 4%" not in txt_multi
+    assert "Wells Fargo fourth-quarter earnings" in txt_multi
+
+    # 3. Extracción de lista de frases individuales
+    frases = BaseProcesadorArticulo.extraer_frases_banco(titular_ajeno, cuerpo_multi, "WFC", titular_condicional=True)
+    assert len(frases) == 1
+    assert "Wells Fargo" in frases[0]

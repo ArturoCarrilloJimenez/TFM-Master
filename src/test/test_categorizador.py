@@ -82,7 +82,7 @@ def test_es_rol_analista_tercero():
     assert not CategorizadorArticulos.es_rol_analista_tercero(titular_sujeto, cuerpo_sujeto, "JPM")
 
 
-@patch("articulos.models.categorizador.SentenceTransformer")
+@patch("articulos.models.categorizador.categorizador.SentenceTransformer")
 def test_clasificar_noticia_y_dataset(mock_st_cls):
     """Verifica la inferencia vectorial mockeada para clasificar_noticia y clasificar_dataset."""
     mock_instance = MagicMock()
@@ -196,11 +196,13 @@ def test_clasificar_dataset_preserva_todos_los_campos_y_anexa_predicciones():
 
 def test_etl_categorizacion_poda_esquema_silver():
     """Verifica que el orquestador ETL descarte únicamente las columnas crudas redundantes para Silver."""
-    from articulos.etl_categorizacion import COLUMNAS_DESCARTAR_SILVER
+    from articulos.etl_silver import COLUMNAS_DESCARTAR_SILVER
 
     row = {
+        "record_id": "abc123456789012345678901",
         "ticker": "JPM",
         "company_name": "JPMorgan Chase & Co.",
+        "article": "long article body",
         "text": "full text",
         "publisher": "SentARL",
         "url": "https://example.com",
@@ -211,9 +213,11 @@ def test_etl_categorizacion_poda_esquema_silver():
 
     clean_row = {k: v for k, v in row.items() if k not in COLUMNAS_DESCARTAR_SILVER}
     assert "text" not in clean_row
+    assert "article" not in clean_row
     assert "publisher" not in clean_row
     assert "url" not in clean_row
     assert "source_dataset" not in clean_row
+    assert clean_row["record_id"] == "abc123456789012345678901"
     assert clean_row["ticker"] == "JPM"
     assert clean_row["category"] == "Earnings"
     assert clean_row["is_ruido"] is False
@@ -221,7 +225,7 @@ def test_etl_categorizacion_poda_esquema_silver():
 
 def test_worker_init_and_chunk_processor():
     """Verifica que las funciones de inicialización y procesamiento de chunks por worker operen correctamente."""
-    from articulos.models.categorizador import _init_worker, _procesar_chunk_worker
+    from articulos.models.categorizador.categorizador import _init_worker, _procesar_chunk_worker
 
     _init_worker("sentence-transformers/all-MiniLM-L6-v2", "cpu")
     chunk = [
@@ -281,8 +285,8 @@ def test_clasificar_dataset_multiprocessing_mock():
     mock_executor.__enter__.return_value = mock_executor
     mock_executor.submit.return_value = mock_future
 
-    with patch("articulos.models.categorizador.ProcessPoolExecutor", return_value=mock_executor), \
-         patch("articulos.models.categorizador.get_optimal_workers", return_value=2):
+    with patch("articulos.models.categorizador.categorizador.ProcessPoolExecutor", return_value=mock_executor), \
+         patch("articulos.models.categorizador.categorizador.get_optimal_workers", return_value=2):
 
         results = model.clasificar_dataset(records, batch_size=128)
         assert len(results) == 2  # 2 chunks ejecutados
