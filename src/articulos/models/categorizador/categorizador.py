@@ -1,7 +1,6 @@
 """Módulo de modelo y clasificación semántica de artículos financieros."""
 
 import os
-import re
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -11,7 +10,7 @@ import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 
-from articulos.categories import CATEGORIES
+from articulos.models.categorizador.categories import CATEGORIES
 from articulos.models.base_nlp import BaseProcesadorArticulo
 from shared.logging import Logger
 from shared.tickets import (

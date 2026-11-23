@@ -20,6 +20,7 @@ import pandas as pd
 
 
 from dependencies.dependencies import get_storage_repository, get_compactor
+from shared.ids import generar_record_id
 from shared.logging import Logger
 
 logger = Logger("ETLMultisource")
@@ -184,6 +185,12 @@ def extract_and_transform() -> pd.DataFrame:
     df["ticker_count"] = df.groupby(["title", "datetime"])["ticker"].transform("nunique")
     df["is_multisubject"] = df["ticker_count"] > 1
 
+    # Identificador determinista de trazabilidad Bronze -> Silver -> Gold
+    df["record_id"] = [
+        generar_record_id(str(t), str(d), str(tit))
+        for t, d, tit in zip(df["ticker"], df["date"], df["title"])
+    ]
+
     logger.info(f"Total registros limpios consolidados: {len(df):,}")
 
     con_articulo = (df["article"].str.len() > 0).sum()
@@ -193,6 +200,7 @@ def extract_and_transform() -> pd.DataFrame:
     logger.info(f"Registros multisujeto (compartidos por 2+ tickers): {df['is_multisubject'].sum():,}")
 
     columnas_finales = [
+        "record_id",
         "ticker",
         "company_name",
         "cik",

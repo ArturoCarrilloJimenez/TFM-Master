@@ -123,13 +123,16 @@ def test_extract_and_transform_pipeline():
     assert wfc_row["title"] == "Wells Fargo Declares Regular Dividend"
     assert wfc_row["article"] == ""
 
-    # Verificar columnas finales esperadas incluyendo ticker_count e is_multisubject
+    # Verificar columnas finales esperadas incluyendo record_id, ticker_count e is_multisubject
     columnas_esperadas = [
+        "record_id",
         "ticker", "company_name", "cik", "date", "datetime",
         "title", "article", "text", "publisher", "url", "source_dataset",
         "ticker_count", "is_multisubject"
     ]
     assert list(df_result.columns) == columnas_esperadas
+    assert df_result["record_id"].nunique() == len(df_result)
+    assert (df_result["record_id"].str.len() == 24).all()
     assert (df_result["ticker_count"] == 1).all()
     assert (~df_result["is_multisubject"]).all()
 

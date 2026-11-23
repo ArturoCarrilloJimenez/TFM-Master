@@ -6,31 +6,37 @@ TICKETS: dict[str, dict[str, Any]] = {
     "JPM": {
         "cik": "CIK0000019617",
         "name": "JPMorgan Chase & Co.",
+        "short_name": "JPMorgan Chase",
         "aliases": ["jpmorgan", "j.p. morgan", "chase", "jamie dimon", "jpm"],
     },
     "BAC": {
         "cik": "CIK0000070858",
         "name": "Bank of America Corp /DE/",
+        "short_name": "Bank of America",
         "aliases": ["bank of america", "b of a", "bofa", "merrill lynch", "brian moynihan", "bac"],
     },
     "WFC": {
         "cik": "CIK0000072971",
         "name": "Wells Fargo & Company/MN",
+        "short_name": "Wells Fargo",
         "aliases": ["wells fargo", "charlie scharf", "wfc"],
     },
     "C": {
         "cik": "CIK0000831001",
         "name": "Citigroup Inc.",
+        "short_name": "Citigroup",
         "aliases": ["citigroup", "citi", "jane fraser"],
     },
     "GS": {
         "cik": "CIK0000886982",
         "name": "Goldman Sachs Group Inc.",
+        "short_name": "Goldman Sachs",
         "aliases": ["goldman sachs", "goldman", "david solomon", "gs"],
     },
     "MS": {
         "cik": "CIK0000895421",
         "name": "Morgan Stanley",
+        "short_name": "Morgan Stanley",
         "aliases": ["morgan stanley", "ted pick", "james gorman", "ms"],
     },
 }
