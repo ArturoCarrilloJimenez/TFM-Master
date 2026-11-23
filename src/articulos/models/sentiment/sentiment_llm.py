@@ -1,8 +1,10 @@
 """Motor de análisis de sentimiento financiero dirigido al ticker mediante Claude API (Batch y Realtime)."""
 
 import json
+import re
 import time
 from typing import Any
+import urllib.parse
 
 from articulos.models.sentiment.base_sentiment import (
     BaseSentimentEngine,
@@ -25,6 +27,10 @@ _NO_TEMP_PREFIXES: tuple[str, ...] = (
 )
 
 
+_ALLOWED_HOSTS: tuple[str, ...] = ("api.anthropic.com",)
+_BATCH_ID_PATTERN: re.Pattern[str] = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
 class AnthropicSentimentEngine(BaseSentimentEngine):
     """Adaptador de sentimiento sobre Anthropic Messages API (Realtime y Batch -50%)."""
 
@@ -44,6 +50,7 @@ class AnthropicSentimentEngine(BaseSentimentEngine):
             system_prompt=system_prompt,
             max_tokens=max_tokens,
             timeout_s=timeout_s,
+            allowed_hosts=_ALLOWED_HOSTS,
         )
         self.api_key = clean_secret(api_key if api_key is not None else settings.anthropic_api_key)
         self.api_version = api_version or settings.anthropic_api_version or "2023-06-01"
@@ -168,8 +175,14 @@ class AnthropicSentimentEngine(BaseSentimentEngine):
         )
 
     def consultar_batch(self, batch_id: str) -> dict[str, Any]:
-        """Consulta el estado actual de un Message Batch."""
-        return self._request_json(f"https://api.anthropic.com/v1/messages/batches/{batch_id}", method="GET")
+        """Consulta el estado actual de un Message Batch validando el identificador contra traversal."""
+        if not isinstance(batch_id, str) or not _BATCH_ID_PATTERN.fullmatch(batch_id):
+            raise ValueError(f"Identificador de batch inválido: {batch_id!r}")
+        safe_batch_id = urllib.parse.quote(batch_id, safe="")
+        return self._request_json(
+            f"https://api.anthropic.com/v1/messages/batches/{safe_batch_id}",
+            method="GET",
+        )
 
     def descargar_resultados_batch(
         self,

@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import numpy as np
@@ -115,6 +116,7 @@ class BaseSentimentEngine(ABC):
         system_prompt: str | None = None,
         max_tokens: int = 4096,
         timeout_s: int = 180,
+        allowed_hosts: tuple[str, ...] = (),
     ) -> None:
         self.model = model or settings.claude_model_default or "claude-haiku-5-5"
         self.prompt_version = prompt_version or settings.anthropic_prompt_version or "v1_en"
@@ -122,6 +124,7 @@ class BaseSentimentEngine(ABC):
         self.system_prompt = base_prompt + JSON_INSTR
         self.max_tokens = max_tokens
         self.timeout_s = timeout_s
+        self.allowed_hosts: tuple[str, ...] = allowed_hosts
 
     def _build_user_prompt(self, lote: list[EntradaSentimiento]) -> str:
         """Construye el prompt de usuario indexado para el lote de noticias."""
@@ -134,6 +137,18 @@ class BaseSentimentEngine(ABC):
             )
         return "Evaluate the following news items:\n\n" + "\n\n".join(bloques)
 
+    def _validar_url(self, url: str) -> str:
+        """Valida esquema HTTPS, host permitido y ausencia de path traversal en la URL."""
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError(f"URL insegura o esquema no permitido: {url!r}")
+        if self.allowed_hosts and parsed.hostname not in self.allowed_hosts:
+            raise ValueError(f"Host no permitido para petición HTTP: {parsed.hostname!r}")
+        raw_path_lower = parsed.path.lower()
+        if "\\" in parsed.path or "%2e" in raw_path_lower or ".." in parsed.path.split("/"):
+            raise ValueError(f"Ruta de URL inválida (posible path traversal): {url!r}")
+        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
     def _http_call(
         self,
         url: str,
@@ -142,8 +157,9 @@ class BaseSentimentEngine(ABC):
         payload: dict[str, Any] | None = None,
     ) -> str:
         """Ejecuta una petición HTTP síncrona sin dependencias externas."""
+        safe_url = self._validar_url(url)
         raw_body = json.dumps(payload).encode("utf-8") if payload is not None else None
-        req = urllib.request.Request(url, data=raw_body, headers=headers, method=method)
+        req = urllib.request.Request(safe_url, data=raw_body, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                 return resp.read().decode("utf-8")

@@ -1,7 +1,9 @@
 """Tests unitarios para el motor AnthropicSentimentEngine (Batch API y Realtime)."""
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from articulos.models.sentiment import (
     AnthropicSentimentEngine,
@@ -149,3 +151,59 @@ def test_base_sentiment_contract_and_clipping():
     assert parsed["h0"]["p_neg"] == 0.0
     assert parsed["h0"]["in_tokens"] == 100.0
     assert parsed["h0"]["out_tokens"] == 50.0
+
+
+@pytest.mark.parametrize(
+    "bad_batch_id",
+    [
+        "",
+        "../admin",
+        "msgbatch_1/../../secret",
+        "msgbatch_1?foo=bar",
+        "msgbatch_1#frag",
+        "msgbatch%2e%2e",
+        "msgbatch 1",
+    ],
+)
+def test_consultar_batch_rechaza_traversal(bad_batch_id: str):
+    """Bloquea identificadores con caracteres de traversal o inyección antes de construir la URL."""
+    engine = AnthropicSentimentEngine(api_key="sk-ant-test")
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        with pytest.raises(ValueError, match="Identificador de batch inválido"):
+            engine.consultar_batch(bad_batch_id)
+        mock_urlopen.assert_not_called()
+
+
+def test_consultar_batch_valido_codifica_url():
+    """Permite batch_id válidos y ejecuta la petición HTTPS esperada."""
+    engine = AnthropicSentimentEngine(api_key="sk-ant-test")
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = b'{"id": "msgbatch_01ABC_xyz-1", "processing_status": "ended"}'
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        out = engine.consultar_batch("msgbatch_01ABC_xyz-1")
+
+    assert out["id"] == "msgbatch_01ABC_xyz-1"
+    req_arg = mock_urlopen.call_args.args[0]
+    assert req_arg.full_url == "https://api.anthropic.com/v1/messages/batches/msgbatch_01ABC_xyz-1"
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "file:///etc/passwd",
+        "http://api.anthropic.com/v1/messages",
+        "https://evil.com/v1/messages",
+        "https://api.anthropic.com/v1/messages/../../admin",
+        "https://api.anthropic.com/v1/messages/%2e%2e/admin",
+        "https://api.anthropic.com/v1\\messages",
+    ],
+)
+def test_http_call_rechaza_urls_inseguras(bad_url: str):
+    """Valida esquema HTTPS, host permitido y ausencia de path traversal en _http_call."""
+    engine = AnthropicSentimentEngine(api_key="sk-ant-test")
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        with pytest.raises(ValueError):
+            engine._http_call(bad_url, headers={"x-api-key": "test"})
+        mock_urlopen.assert_not_called()
