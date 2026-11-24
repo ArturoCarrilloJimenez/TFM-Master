@@ -92,3 +92,26 @@ def test_build_msg_with_and_without_context():
     cyclic_dict["self"] = cyclic_dict
     fallback_msg = logger_instance._build_msg("Failure case", cyclic_dict)
     assert "Serialization failed" in fallback_msg
+
+
+def test_logger_sanitizes_log_injection(capsys):
+    """Verifica que saltos de línea y caracteres de control no inyecten líneas de log falsas."""
+    logger_instance = Logger("security_logger")
+
+    malicious_msg = "Batch [123\r\nFAKE | INFO | Admin logged in]\x00 ok"
+    malicious_ctx = {"batch_id": "abc\nFAKE_KEY=1", "note": "line1\r\nline2"}
+
+    sanitized_plain = logger_instance._build_msg(malicious_msg, None)
+    assert "\n" not in sanitized_plain
+    assert "\r" not in sanitized_plain
+    assert "\x00" not in sanitized_plain
+    assert "\\nFAKE" in sanitized_plain
+
+    sanitized_ctx = logger_instance._build_msg(malicious_msg, malicious_ctx)
+    assert "\n" not in sanitized_ctx
+    assert "\r" not in sanitized_ctx
+    assert sanitized_ctx.endswith("\x1b[0m")
+
+    logger_instance.info(malicious_msg, context=malicious_ctx)
+    out_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(out_lines) == 1

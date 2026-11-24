@@ -17,6 +17,8 @@ class ScraperTask:
         max_retries: Intentos máximos de reintento ante fallos temporales (por defecto 3).
         context: Metadatos adicionales de negocio (ticker, filing_date, accession_number, etc.).
         headers: Cabeceras HTTP personalizadas opcionales para la petición de scraping.
+        exclude_selectors: Selectores CSS o etiquetas a excluir del DOM antes de extraer.
+        follow_links: Reglas declarativas opcionales para descubrir y extraer sub-enlaces.
     """
 
     url: str
@@ -26,15 +28,23 @@ class ScraperTask:
     max_retries: int = 3
     context: dict[str, Any] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
+    exclude_selectors: list[str] | None = None
+    follow_links: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serializa la tarea al formato esperado por la API Producer."""
+        parser_config: dict[str, Any] = {
+            "selectors": self.selectors,
+        }
+        if self.exclude_selectors:
+            parser_config["exclude_selectors"] = self.exclude_selectors
+        if self.follow_links:
+            parser_config["follow_links"] = self.follow_links
+
         return {
             "url": self.url,
             "parser_type": self.parser_type,
-            "parser_config": {
-                "selectors": self.selectors,
-            },
+            "parser_config": parser_config,
             "priority": self.priority,
             "max_retries": self.max_retries,
             "context": self.context,

@@ -130,11 +130,25 @@ async def test_sec_historical_etl_run(mock_adapter, mock_compactor, mock_storage
         body=b"PAR1_MOCK_PARQUET_BYTES",
     )
 
-    # Verificar que el scraper_client recibió las 6 tareas 8-K
+    # Verificar que el scraper_client recibió las 6 tareas 8-K con follow_links y User-Agent
     mock_scraper_client.dispatch_tasks.assert_awaited_once()
     s_args, s_kwargs = mock_scraper_client.dispatch_tasks.call_args
     assert len(s_kwargs["tasks"]) == 6
     assert s_kwargs["job_id"] == "sec-8k-2022-01-01-to-2023-12-31"
+
+    sample_task = s_kwargs["tasks"][0].to_dict()
+    assert sample_task["headers"]["User-Agent"]
+    assert sample_task["parser_config"]["exclude_selectors"] == ["ix:header", "script", "style"]
+    follow_rule = sample_task["parser_config"]["follow_links"][0]
+    assert follow_rule["name"] == "exhibits"
+    assert follow_rule["source_url"].endswith("-index.htm")
+    assert follow_rule["fallback_source_urls"][0].endswith("-index.html")
+    assert follow_rule["filter_regex"] == r"(?i)^EX-(?!101\b)"
+    assert follow_rule["max_links"] == 50
+    assert follow_rule["metadata_selectors"] == {
+        "description": "td:nth-of-type(2)",
+        "size": "td:nth-of-type(5)",
+    }
 
 
 def test_run_sec_historical_etl_wrapper(mock_adapter, mock_compactor, mock_storage, mock_scraper_client):
