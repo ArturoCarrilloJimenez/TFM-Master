@@ -18,6 +18,9 @@ logger = Logger("SECHistoricalETL")
 # Universo de los 6 gigantes bancarios derivado de la fuente única de verdad (shared.tickets)
 TARGET_BANKS: dict[str, str] = {ticker: data["name"] for ticker, data in TICKETS.items()}
 
+SEC_EXCLUDE_SELECTORS: list[str] = ["ix:header", "script", "style"]
+SEC_EXHIBIT_FILTER_REGEX: str = r"(?i)^EX-(?!101\b)"
+
 
 class SECHistoricalETL:
     """Orquestador ETL para extraer, clasificar, compactar y persistir filings de la SEC en el Data Lake."""
@@ -34,6 +37,62 @@ class SECHistoricalETL:
         self.compactor = compactor or get_compactor()
         self.storage = storage or get_storage_repository()
         self.scraper_client = scraper_client or get_scraper_client()
+
+    def _build_sec_scraper_task(self, filing: SECFiling) -> ScraperTask:
+        """Construye la tarea ScraperTask para un Form 8-K incluyendo extracción de anexos vía follow_links."""
+        raw_ua = getattr(self.adapter, "user_agent", None)
+        user_agent = raw_ua if isinstance(raw_ua, str) and raw_ua.strip() else SECEdgarAdapter.DEFAULT_USER_AGENT
+
+        fallback_urls = (
+            [f"{filing.index_url[:-4]}.html"]
+            if filing.index_url.endswith("-index.htm")
+            else []
+        )
+
+        follow_rule: dict[str, Any] = {
+            "name": "exhibits",
+            "source_url": filing.index_url,
+            "row_selector": "table.tableFile tr",
+            "link_selector": "td:nth-of-type(3) a",
+            "filter_selector": "td:nth-of-type(4)",
+            "filter_regex": SEC_EXHIBIT_FILTER_REGEX,
+            "url_strip_regex": r"^/ix\?doc=",
+            "max_links": 50,
+            "metadata_selectors": {
+                "description": "td:nth-of-type(2)",
+                "size": "td:nth-of-type(5)",
+            },
+            "exclude_selectors": SEC_EXCLUDE_SELECTORS,
+            "selectors": {"body_text": "body"},
+        }
+        if fallback_urls:
+            follow_rule["fallback_source_urls"] = fallback_urls
+
+        return ScraperTask(
+            url=filing.document_url,
+            parser_type="static_css",
+            selectors={"body_text": "body"},
+            exclude_selectors=SEC_EXCLUDE_SELECTORS,
+            follow_links=[follow_rule],
+            priority=1,
+            max_retries=3,
+            headers={"User-Agent": user_agent},
+            context={
+                "ticker": filing.ticker,
+                "cik": filing.cik,
+                "company_name": filing.company_name,
+                "form": filing.form,
+                "filing_date": filing.filing_date,
+                "report_date": filing.report_date,
+                "acceptance_date_time": filing.acceptance_date_time,
+                "accession_number": filing.accession_number,
+                "items": filing.items,
+                "primary_document": filing.primary_document,
+                "primary_doc_description": filing.primary_doc_description,
+                "document_url": filing.document_url,
+                "index_url": filing.index_url,
+            },
+        )
 
     async def run(
         self,
@@ -111,31 +170,7 @@ class SECHistoricalETL:
             logger.info(
                 f"Transformando {len(filings_8k):,} filings 8-K en tareas ScraperTask para envío al Producer..."
             )
-            scraper_tasks = [
-                ScraperTask(
-                    url=f.document_url,
-                    parser_type="static_css",
-                    selectors={"body_text": "body"},
-                    priority=1,
-                    max_retries=3,
-                    context={
-                        "ticker": f.ticker,
-                        "cik": f.cik,
-                        "company_name": f.company_name,
-                        "form": f.form,
-                        "filing_date": f.filing_date,
-                        "report_date": f.report_date,
-                        "acceptance_date_time": f.acceptance_date_time,
-                        "accession_number": f.accession_number,
-                        "items": f.items,
-                        "primary_document": f.primary_document,
-                        "primary_doc_description": f.primary_doc_description,
-                        "document_url": f.document_url,
-                        "index_url": f.index_url,
-                    },
-                )
-                for f in filings_8k
-            ]
+            scraper_tasks = [self._build_sec_scraper_task(f) for f in filings_8k]
 
             job_id = f"sec-8k-{start_date}-to-{end_date}"
             scraper_result = await self.scraper_client.dispatch_tasks(

@@ -1,10 +1,11 @@
-import logging
-import sys
-import json
 import datetime
+import json
+import logging
+import re
+import sys
+from decimal import Decimal
 from typing import Any, Dict, Optional
 from uuid import UUID
-from decimal import Decimal
 
 
 class StyleFormatter(logging.Formatter):
@@ -56,22 +57,35 @@ class Logger:
         except Exception:
             return "<Unserializable Object>"
 
+    _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+    @classmethod
+    def _sanitize_log_text(cls, value: Any) -> str:
+        """Neutraliza saltos de línea y caracteres de control para evitar Log Injection (CWE-117)."""
+        clean = str(value).replace("\r", "\\r").replace("\n", "\\n")
+        return cls._CONTROL_CHARS_RE.sub(" ", clean)
+
     def _build_msg(self, msg: str, context: Optional[Dict[str, Any]]) -> str:
-        """Serialización segura con fallback ante fallos."""
+        """Serialización segura con sanitización CRLF y fallback ante fallos."""
+        safe_msg = self._sanitize_log_text(msg)
         if not context:
-            return msg
+            return safe_msg
 
         try:
             # Usamos el serializador universal como 'default'
-            ctx_json = json.dumps(
-                context, default=self._universal_serializer, ensure_ascii=False
+            ctx_json = self._sanitize_log_text(
+                json.dumps(context, default=self._universal_serializer, ensure_ascii=False)
             )
         except Exception:
             # Si incluso el serializador falla (ej. recursión infinita),
-            # enviamos un mensaje de emergencia para no tirar el proceso.
-            ctx_json = f'{{"log_error": "Serialization failed", "raw": "{str(context)[:100]}"}}'
+            # enviamos un mensaje de emergencia seguro para no tirar el proceso.
+            raw_safe = self._sanitize_log_text(str(context)[:100])
+            ctx_json = json.dumps(
+                {"log_error": "Serialization failed", "raw": raw_safe},
+                ensure_ascii=False,
+            )
 
-        return f"{msg} | \x1b[36m{ctx_json}\x1b[0\n"
+        return f"{safe_msg} | \x1b[36m{ctx_json}\x1b[0m"
 
     # Métodos de log (info, error, etc.) se mantienen igual llamando a self._build_msg
     def info(self, msg: str, context: Optional[Dict[str, Any]] = None):

@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -155,7 +156,12 @@ async def ejecutar_sentimiento_batch(
         if not state_path.exists():
             raise FileNotFoundError(f"No existe estado de Batch en {state_path}. Ejecuta primero --step submit.")
         state_data = json.loads(state_path.read_text(encoding="utf-8"))
-        active_batch_id = active_batch_id or state_data["batch_id"]
+        raw_batch_id = active_batch_id or state_data["batch_id"]
+        active_batch_id = re.sub(
+            r"[\x00-\x1f\x7f]",
+            "",
+            str(raw_batch_id).replace("\r", "").replace("\n", ""),
+        )
         saved_chunk_map: dict[str, list[str]] = state_data["chunk_map"]
 
         status_obj = llm.consultar_batch(active_batch_id)

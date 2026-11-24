@@ -118,3 +118,62 @@ async def test_run_standalone_falla_si_no_hay_checkpoint(tmp_path):
     with patch("articulos.etl_sentimientos.cargar_relevantes_checkpoint", AsyncMock(return_value=None)):
         with pytest.raises(FileNotFoundError, match="etl_categorizador.py"):
             await _run_standalone(checkpoint_path=tmp_path / "missing.parquet", dry_run=True)
+
+
+@pytest.mark.asyncio
+async def test_collect_sanitiza_batch_id_desde_estado(tmp_path):
+    """Verifica que active_batch_id leído desde JSON no inyecte saltos de línea en los logs."""
+    from articulos import etl_sentimientos
+
+    compactor = ParquetCompactor()
+    relevantes = [
+        {
+            "record_id": "abc123456789012345678901",
+            "ticker": "JPM",
+            "title": "JPMorgan Q1 earnings",
+            "article": "JPMorgan beat consensus.",
+            "process_text": "JPMorgan beat consensus.",
+        }
+    ]
+    _, unicas = preparar_entradas_sentimiento(relevantes, model="claude-haiku-5-5", prompt_version="v1_en")
+    h = next(iter(unicas.keys()))
+
+    state_path = tmp_path / "batch_state.json"
+    state_path.write_text(
+        f'{{"batch_id": "msgbatch_1\\r\\nFAKE_LOG_LINE", "chunk_map": {{"chunk_00000": ["{h}"]}}}}',
+        encoding="utf-8",
+    )
+
+    mock_repo = MagicMock()
+    mock_repo.get = AsyncMock(side_effect=RuntimeError("no sent cache"))
+    mock_repo.save = AsyncMock()
+    mock_repo.close = AsyncMock()
+
+    mock_engine = MagicMock()
+    mock_engine.model = "claude-haiku-5-5"
+    mock_engine.prompt_version = "v1_en"
+    mock_engine.construir_batch_requests.return_value = ([{"custom_id": "chunk_00000", "params": {}}], {"chunk_00000": [h]})
+    mock_engine.consultar_batch.return_value = {"processing_status": "ended", "results_url": "https://mock/res"}
+    mock_engine.descargar_resultados_batch.return_value = (
+        {h: {"input_hash": h, "sentiment_label": 1, "sentiment_score": 0.9}},
+        1,
+        0,
+    )
+
+    with patch("shared.parquet_cache.get_compactor", return_value=compactor), \
+         patch("shared.parquet_cache.get_storage_repository", return_value=mock_repo), \
+         patch.object(etl_sentimientos.logger._logger, "info", wraps=etl_sentimientos.logger._logger.info) as spy_info:
+        res = await ejecutar_sentimiento_batch(
+            relevantes=relevantes,
+            engine=mock_engine,
+            step="collect",
+            wait=True,
+            poll_interval_s=0,
+            local_cache_path=tmp_path / "sent_cache.parquet",
+            batch_state_path=state_path,
+        )
+
+    assert res["batch_id"] == "msgbatch_1FAKE_LOG_LINE"
+    logged_msgs = [call.args[0] for call in spy_info.call_args_list]
+    assert any("msgbatch_1FAKE_LOG_LINE" in m for m in logged_msgs)
+    assert all("\n" not in m and "\r" not in m for m in logged_msgs)

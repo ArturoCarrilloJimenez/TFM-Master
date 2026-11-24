@@ -14,11 +14,17 @@ def test_scraper_task_serialization():
         priority=5,
         max_retries=3,
         context={"ticker": "JPM", "filing_date": "2023-03-01"},
+        headers={"User-Agent": "TFM-Test"},
+        exclude_selectors=["ix:header", "script"],
+        follow_links=[{"name": "exhibits", "link_selector": "a", "selectors": {"body_text": "body"}}],
     )
     d = task.to_dict()
     assert d["url"] == task.url
     assert d["parser_type"] == "static_css"
     assert d["parser_config"]["selectors"] == {"items_text": "body"}
+    assert d["parser_config"]["exclude_selectors"] == ["ix:header", "script"]
+    assert len(d["parser_config"]["follow_links"]) == 1
+    assert d["headers"] == {"User-Agent": "TFM-Test"}
     assert d["priority"] == 5
     assert d["max_retries"] == 3
     assert d["context"]["ticker"] == "JPM"
