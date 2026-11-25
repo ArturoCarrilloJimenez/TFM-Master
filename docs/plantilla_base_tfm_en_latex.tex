@@ -1,0 +1,239 @@
+\documentclass[11pt, a4paper]{report}
+
+% --- CODIFICACIÓN, IDIOMA Y TIPOGRAFÍA ---
+\usepackage{fontspec}
+\usepackage[spanish, english, bidi=basic, provide=*]{babel}
+\babelprovide[import, onchar=ids fonts]{spanish}
+\babelfont{rm}{Noto Sans}
+\babelfont{sf}{Noto Sans}
+\babelfont{tt}{Noto Sans Mono}
+\renewcommand{\familydefault}{\sfdefault}
+
+% --- MÁRGENES Y GEOMETRÍA ---
+\usepackage[
+    a4paper,
+    top=2.5cm,
+    bottom=2.5cm,
+    left=2.5cm,
+    right=2.5cm,
+    headheight=14pt
+]{geometry}
+
+% --- PALETA DE COLORES FINTECH / BANCA INSTITUCIONAL ---
+\usepackage[table]{xcolor}
+\definecolor{NavyPrimary}{HTML}{081C3F}    % Azul medianoche (dominante)
+\definecolor{CyanAccent}{HTML}{0077B6}     % Azul técnico (acento)
+\definecolor{SlateText}{HTML}{1E293B}      % Gris carbón para lectura cómoda
+\definecolor{MutedGray}{HTML}{64748B}      % Gris pizarra para metadatos y pies
+\definecolor{LightTint}{HTML}{F1F5F9}      % Fondo sutil para tablas y cajas
+
+% --- MATEMÁTICAS, TABLAS Y GRÁFICOS ---
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{float}
+\usepackage[font=small, labelfont={bf, color=NavyPrimary}, textfont={color=MutedGray}]{caption}
+
+% --- CABECERAS, PIES Y LISTAS ---
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\setlist[itemize]{label=\textcolor{CyanAccent}{\textbullet}, leftmargin=1.5em}
+\setlist[enumerate]{label=\textcolor{NavyPrimary}{\textbf{\arabic*.}}, leftmargin=1.5em}
+
+% --- ENLACES Y METADATOS PDF ---
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=NavyPrimary,
+    citecolor=CyanAccent,
+    urlcolor=CyanAccent,
+    pdftitle={Motor Predictivo Hibrido de Mercados Financieros - TFM},
+    pdfauthor={Arturo Carrillo Jimenez, Felipe Tais Diaz}
+}
+
+% --- ESTILO DE PÁGINA INTERIOR ---
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\color{MutedGray}\textsc{Motor Predictivo Híbrido de Mercados Financieros (US Big 6)}}
+\fancyhead[R]{\footnotesize\color{MutedGray}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{LightTint}\leaders\hrule height \headrulewidth\hfill}}
+
+\fancypagestyle{plain}{
+    \fancyhf{}
+    \fancyfoot[R]{\footnotesize\color{MutedGray}\thepage}
+    \renewcommand{\headrulewidth}{0pt}
+}
+
+% --- ESTILO DE CAPÍTULOS Y SECCIONES ---
+\makeatletter
+\def\@makechapterhead#1{%
+  \vspace*{20\p@}%
+  {\parindent \z@ \raggedright \normalfont
+    \ifnum \c@secnumdepth >\m@ne
+        \fontsize{11}{13}\selectfont\bfseries\color{CyanAccent}
+        \MakeUppercase{\@chapapp\ \thechapter}
+        \par\nobreak
+        \vskip 6\p@
+    \fi
+    \interlinepenalty\@M
+    \fontsize{22}{26}\selectfont\bfseries\color{NavyPrimary} #1\par\nobreak
+    \vskip 10\p@
+    {\color{NavyPrimary}\hrule height 1.2pt}
+    \vskip 24\p@
+  }}
+\def\@makeschapterhead#1{%
+  \vspace*{20\p@}%
+  {\parindent \z@ \raggedright
+    \normalfont
+    \interlinepenalty\@M
+    \fontsize{22}{26}\selectfont\bfseries\color{NavyPrimary} #1\par\nobreak
+    \vskip 10\p@
+    {\color{NavyPrimary}\hrule height 1.2pt}
+    \vskip 24\p@
+  }}
+\makeatother
+
+\color{SlateText}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.65em}
+\linespread{1.15}
+
+\begin{document}
+
+% ==============================================================================
+% PORTADA ESTILO INFORME FINTECH / BANCA INSTITUCIONAL
+% ==============================================================================
+\begin{titlepage}
+    \thispagestyle{empty}
+    \noindent
+    \begin{minipage}[t]{0.5\textwidth}
+        \raggedright
+        {\fontsize{13}{15}\selectfont\bfseries\color{NavyPrimary} EBIS} {\fontsize{10}{12}\selectfont\color{MutedGray} Business Techschool}
+    \end{minipage}%
+    \begin{minipage}[t]{0.5\textwidth}
+        \raggedleft
+        {\fontsize{9}{11}\selectfont\color{MutedGray} Universidad de Vitoria-Gasteiz} {\fontsize{13}{15}\selectfont\bfseries\color{NavyPrimary} EUNEIZ}
+    \end{minipage}
+
+    \vspace{2.8cm}
+
+    {\fontsize{9.5}{12}\selectfont\bfseries\color{CyanAccent}
+    TRABAJO FIN DE MÁSTER \quad $\cdot$ \quad MÁSTER EN DATA SCIENCE E INTELIGENCIA ARTIFICIAL}
+
+    \vspace{0.5cm}
+
+    {\fontsize{26}{32}\selectfont\bfseries\color{NavyPrimary}
+    Motor Predictivo Híbrido de Mercados Financieros\par}
+
+    \vspace{0.4cm}
+
+    {\fontsize{13}{18}\selectfont\color{MutedGray}
+    Arquitectura integral de ingesta multimodal, alineación temporal Point-in-Time y regresión cuantílica sobre el universo bancario estadounidense (US Big 6)\par}
+
+    \vspace{1.2cm}
+    {\color{CyanAccent}\rule{3.5cm}{2pt}}
+    \vspace{1.5cm}
+
+    % Bloque de metadatos con barra lateral institucional
+    \begin{tabular}{!{\color{NavyPrimary}\vrule width 2.5pt}l l}
+        \textbf{\color{NavyPrimary}Autores:} & Arturo Carrillo Jiménez $\cdot$ Felipe Tais Díaz \\[0.4em]
+        \textbf{\color{NavyPrimary}Tutor:} & Germán Cubas Guillé \\[0.4em]
+        \textbf{\color{NavyPrimary}Universo de estudio:} & JPM $\cdot$ BAC $\cdot$ WFC $\cdot$ C $\cdot$ GS $\cdot$ MS (2010--2023) \\[0.4em]
+        \textbf{\color{NavyPrimary}Fecha de entrega:} & Febrero de 2027 \\
+    \end{tabular}
+
+    \vfill
+
+    % Franja inferior minimalista con indicadores técnicos del proyecto
+    {\color{LightTint}\hrule height 1pt}
+    \vspace{0.4cm}
+    {\footnotesize\color{MutedGray}
+    \textbf{STACK \& METODOLOGÍA:} Medallion Architecture (Raw / Silver / Gold) $\cdot$ FinBERT ABSA $\cdot$ Point-in-Time Alignment $\cdot$ Quantile Regression}
+\end{titlepage}
+
+% ==============================================================================
+% RESUMEN EJECUTIVO (PÁGINA INDEPENDIENTE ANTES DEL ÍNDICE)
+% ==============================================================================
+\chapter*{Resumen ejecutivo}
+\addcontentsline{toc}{chapter}{Resumen ejecutivo}
+
+\textit{[Espacio reservado para el Resumen Ejecutivo de 1 página. Se redactará al finalizar la fase experimental para sintetizar el problema de negocio, la arquitectura multimodal, las métricas de calibración cuantílica obtenidas y el impacto en gestión de riesgo.]}
+
+\vspace{1em}
+\noindent\textbf{\color{NavyPrimary}Palabras clave:} Finanzas cuantitativas, procesamiento de lenguaje natural financiero, FinBERT, alineación temporal Point-in-Time, regresión cuantílica, arquitectura Medallion, US Big 6.
+
+\clearpage
+
+% ==============================================================================
+% ÍNDICE GENERAL
+% ==============================================================================
+\tableofcontents
+\clearpage
+
+% ==============================================================================
+% CAPÍTULO 1: INTRODUCCIÓN
+% (En vuestro repo, mover este bloque a chapters/01_introduccion.tex e incluir con \input)
+% ==============================================================================
+\chapter{Introducción}
+
+\section{Contexto y motivación del problema}
+La modelización cuantitativa de los mercados financieros ha estado tradicionalmente dominada por el análisis técnico clásico y por enfoques estadísticos basados exclusivamente en series temporales endógenas. No obstante, en entornos caracterizados por una elevada liquidez y exposición informativa constante, la dinámica de los activos responde de forma asimétrica a flujos de información exógena no estructurada, tales como comunicados corporativos, eventos regulatorios, informes de analistas y noticias macroeconómicas.
+
+El presente Trabajo Fin de Máster (TFM) acota su estudio al universo bancario sistémico estadounidense, conocido como el \textbf{US Big 6}: JPMorgan Chase \& Co. (\texttt{JPM}), Bank of America Corp. (\texttt{BAC}), Wells Fargo \& Co. (\texttt{WFC}), Citigroup Inc. (\texttt{C}), The Goldman Sachs Group, Inc. (\texttt{GS}) y Morgan Stanley (\texttt{MS}). Este conjunto de entidades constituye un laboratorio idóneo por su alta profundidad de mercado, su sensibilidad a decisiones de política monetaria y la densidad de cobertura mediática que reciben diariamente.
+
+Respecto al planteamiento inicial recogido en la propuesta del proyecto, el desarrollo empírico ha motivado una evolución arquitectónica sustancial. En lugar de depender de una única fuente histórica estática o de aplicar modelos de lenguaje directamente sobre textos sin depurar, el sistema se ha reestructurado hacia una \textbf{arquitectura multimodal e incremental} basada en el patrón \textit{Medallion} (\textit{Raw}, \textit{Silver} y \textit{Gold}). Esta separación permite auditar sistemáticamente la calidad del dato crudo, aislar múltiples vectores de contaminación semántica y garantizar la trazabilidad completa entre cada evento informativo y su impacto sobre la sesión bursátil correspondiente.
+
+\section{Planteamiento del problema y justificación metodológica}
+El diseño de sistemas predictivos robustos en finanzas exige superar cuatro fallos metodológicos recurrentes en la literatura aplicada:
+
+\begin{enumerate}
+    \item \textbf{No estacionariedad de los precios absolutos:} El entrenamiento directo sobre niveles de precios introduce correlaciones espurias y degrada la capacidad de generalización fuera de muestra. Para mitigar este efecto, la formulación del problema se traslada al dominio de los retornos estandarizados y medidas de dispersión condicional.
+    \item \textbf{Sesgo de mirada al futuro (\textit{Look-Ahead Bias}):} La integración ingenua de noticias y precios suele asumir disponibilidad instantánea de la información, contaminando el conjunto de entrenamiento con señales posteriores al instante de decisión. Para erradicar esta fuga de información, se implementa una alineación temporal estricta \textit{Point-in-Time} (PiT) sincronizada con el calendario operativo de la Bolsa de Nueva York (NYSE).
+    \item \textbf{Ruido semántico y discontinuidad de mercado cerrado:} Los flujos de noticias financieras presentan duplicidades, colisiones de \textit{tickers}, menciones periféricas en artículos multisujeto y sesgos derivados de revisiones de \textit{analyst ratings}. Asimismo, la acumulación de eventos durante fines de semana y festivos requiere un tratamiento específico por bloques discretos antes de la apertura de mercado, evitando distorsiones causadas por esquemas de decaimiento exponencial continuos.
+    \item \textbf{Insuficiencia de la predicción puntual:} Estimar únicamente el valor esperado de un retorno oculta la incertidumbre inherente al régimen de volatilidad vigente. La adopción de \textbf{regresión cuantílica} permite estimar bandas condicionales de probabilidad (como los cuantiles $P_{10}$ y $P_{90}$), proporcionando una herramienta directamente accionable para la gestión de riesgo y el dimensionamiento de coberturas pre-apertura.
+\end{enumerate}
+
+\section{Objetivos del TFM}
+\subsection*{Objetivo general}
+Diseñar, implementar y validar un motor predictivo híbrido y multimodal para el universo bancario \textit{US Big 6} que integre series temporales cuantitativas con señales de sentimiento financiero depuradas, operando bajo una alineación temporal \textit{Point-in-Time} y un enfoque de regresión cuantílica para la estimación de rangos de retorno y riesgo.
+
+\subsection*{Objetivos específicos}
+\begin{itemize}
+    \item \textbf{OE1. Ingeniería de datos en capas:} Construir un pipeline reproducible estructurado bajo el patrón \textit{Medallion} (\textit{Raw}, \textit{Silver} y \textit{Gold}) que integre series de mercado ajustadas, indicadores macroeconómicos, eventos regulatorios y corpus históricos y en vivo de noticias financieras.
+    \item \textbf{OE2. Auditoría y depuración semántica (Quality Gate):} Desarrollar un protocolo de filtrado mediante procesamiento de lenguaje natural para resolver colisiones de entidades, desduplicar registros, aislar contextos relevantes por entidad y neutralizar sesgos de neutralidad y \textit{analyst ratings}.
+    \item \textbf{OE3. Sincronización temporal Point-in-Time:} Implementar un motor de cruce temporal acoplado al calendario bursátil estadounidense que garantice ausencia total de fuga de información futura y modele adecuadamente los bloques de mercado cerrado.
+    \item \textbf{OE4. Modelado cuantílico multimodal:} Entrenar y calibrar modelos de regresión cuantílica capaces de estimar intervalos condicionales de retorno para los seis activos del universo \textit{US Big 6}.
+    \item \textbf{OE5. Validación comparativa, explicabilidad y visualización:} Evaluar el desempeño mediante métricas de calibración de intervalos y estudios de ablación (modelo cuantitativo puro frente a modelo híbrido), complementando los resultados con técnicas de explicabilidad y una interfaz de consulta operativa.
+\end{itemize}
+
+\section{Alcance y estructura de la memoria}
+El alcance de este trabajo comprende el diseño arquitectónico completo, la auditoría exploratoria de datos, la implementación de los pipelines de transformación y modelado, la validación estadística mediante particionado temporal estricto y la exposición de resultados a través de un cuadro de mando analítico. Quedan fuera del alcance la ejecución automatizada de órdenes en mercados reales (\textit{live execution}) y el modelado de microestructura de alta frecuencia (\textit{tick-by-tick}), los cuales se plantean como líneas futuras de evolución.
+
+La memoria se organiza en los siguientes capítulos:
+\begin{itemize}
+    \item \textbf{Capítulo 2 (Estado del Arte):} Revisión crítica de la literatura sobre análisis de sentimiento financiero, fusión multimodal de datos y modelado cuantílico en series temporales.
+    \item \textbf{Capítulo 3 (Arquitectura del Sistema e Ingesta):} Descripción de la infraestructura \textit{Medallion}, fuentes de datos y cumplimiento normativo.
+    \item \textbf{Capítulo 4 (Auditoría Exploratoria y Preprocesamiento):} Diagnóstico cuantitativo de ruido en capa \textit{Raw}, reglas de transformación hacia \textit{Silver/Gold} y alineación \textit{Point-in-Time}.
+    \item \textbf{Capítulo 5 (Ingeniería de Características y Modelado):} Construcción de variables técnicas y de sentimiento, formulación de regresión cuantílica y protocolo de validación temporal.
+    \item \textbf{Capítulo 6 (Experimentos, Resultados y Explicabilidad):} Evaluación de calibración de intervalos, estudio de ablación, análisis SHAP y simulación de gestión de riesgo.
+    \item \textbf{Capítulo 7 (Despliegue y Visualización):} Arquitectura de consumo e interfaz analítica desarrollada.
+    \item \textbf{Capítulo 8 (Conclusiones, Impacto y Líneas Futuras):} Síntesis de hallazgos, valoración de impacto operativo y trabajos futuros.
+\end{itemize}
+
+% ==============================================================================
+% BLOQUES MODULARES PARA LOS SIGUIENTES CAPÍTULOS
+% (Descomentar a medida que vayáis creando los archivos en chapters/)
+% ==============================================================================
+% \input{chapters/02_estado_del_arte}
+% \input{chapters/03_arquitectura_ingesta}
+% \input{chapters/04_eda_preprocesamiento}
+% \input{chapters/05_modelado}
+% \input{chapters/06_resultados}
+% \input{chapters/07_despliegue}
+% \input{chapters/08_conclusiones}
+
+\end{document}

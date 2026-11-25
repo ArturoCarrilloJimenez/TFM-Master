@@ -1,0 +1,15 @@
+\chapter{Despliegue, Calidad y Visualización}
+
+\section{Arquitectura de orquestación e inferencia diaria}
+\textit{[PENDIENTE FASE 4 --- Documentar la orquestación diaria programada previa a la apertura de mercado (Apache Airflow a las 08:30 AM ET) y la ejecución \textit{serverless} en AWS Lambda (\texttt{python:3.13-slim}) leyendo/escribiendo sobre Cloudflare R2.]}
+
+\section{Aseguramiento de la calidad del software (QA)}
+Para garantizar reproducibilidad y mantenibilidad industrial en el desarrollo colaborativo, el repositorio incorpora:
+\begin{itemize}
+    \item \textbf{Gestión determinista:} Entorno gestionado íntegramente con \texttt{uv} (\texttt{pyproject.toml} + \texttt{uv.lock}) sobre Python 3.14.
+    \item \textbf{Pruebas automatizadas:} Suite unitaria y de integración con \texttt{pytest}, \texttt{pytest-asyncio} y \texttt{moto} (simulación en memoria de S3 sin depender de credenciales reales), superando los \textbf{126 tests aprobados}.
+    \item \textbf{Integración continua y análisis estático:} Pipeline en GitHub Actions (\texttt{pr\_validation.yml}) con verificación de \texttt{ruff} y puerta de calidad en \textbf{SonarCloud}.
+\end{itemize}
+
+\section{Cuadro de mando operativo (Streamlit Community Cloud)}
+\textit{[PENDIENTE FASE 4 --- Documentar el diseño e implementación del dashboard de solo lectura sobre los Parquet Gold en Cloudflare R2: visualización del túnel cuantílico del 80\,\%, termómetro de volatilidad condicional, titulares filtrados y explicaciones TreeSHAP por ticker.]}

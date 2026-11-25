@@ -1,0 +1,26 @@
+\chapter{Ingeniería de Características y Modelado (Capa Gold)}
+
+\section{Ingeniería de características cuantitativas y cualitativas}
+\begin{cajadestacada}[Pendiente Fase 3]
+Documentar en este apartado:
+\begin{itemize}
+    \item \textbf{Variables cuantitativas:} retornos logarítmicos rezagados, volatilidad móvil (\textit{rolling volatility}), RSI, medias móviles (SMA/EMA) y volumen relativo.
+    \item \textbf{Variables de sentimiento y cobertura:} agregación por ventana previa a apertura, mitigación de días sin noticias ($\ln(1+N)$, indicador \texttt{has\_news\_today}, soporte nativo de \texttt{NaN}), peso de eventos SEC 8-K y esquema de atenuación temporal elegido.
+\end{itemize}
+\end{cajadestacada}
+
+\section{Selección de características mediante Boruta}
+\textit{[PENDIENTE FASE 3 --- Documentar el filtrado de variables redundantes o ruidosas mediante Boruta sobre el conjunto tabular de entrenamiento sin sesgo por ticker.]}
+
+\section{Formulación de Regresión Cuantílica}
+En lugar de estimar la esperanza condicional $E[y_{t+1} \mid X_t]$, se entrenan estimadores paralelos basados en árboles (\textit{LightGBM} y \textit{XGBoost} con \texttt{objective='quantile'}) minimizando la \textit{Pinball Loss} para los cuantiles $q \in \{0.10, 0.90\}$:
+
+\begin{equation}
+    \mathcal{L}_q(y, \hat{y}) = \max\Big(q(y - \hat{y}),\; (1 - q)(\hat{y} - y)\Big)
+    \label{eq:pinball_loss}
+\end{equation}
+
+De este modo, la amplitud del túnel predicho $\Delta_t = \hat{y}_{0.90} - \hat{y}_{0.10}$ actúa como termómetro dinámico de volatilidad e incertidumbre condicional para el día siguiente.
+
+\section{Protocolo de validación temporal y ajuste de hiperparámetros}
+\textit{[PENDIENTE FASE 3 --- Documentar esquema de particionado temporal estricto (\textit{Walk-Forward} / \textit{Purged K-Fold}), prevención de fuga serial y optimización de hiperparámetros.]}

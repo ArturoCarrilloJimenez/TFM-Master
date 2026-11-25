@@ -1,0 +1,25 @@
+\chapter{Auditoría Exploratoria y Preprocesamiento (Capa Silver)}
+
+\section{Análisis exploratorio de las fuentes Bronze}
+\textit{[Completar con gráficas exportadas a \texttt{figures/} desde los notebooks \texttt{Yfinance\_2010\_2023\_EDA.ipynb}, \texttt{ExplorarDatasetsSec.ipynb} y \texttt{multisource\_financial\_news\_EDA\_2010\_2023.ipynb}: distribución anual por banco, retornos logarítmicos, colas pesadas, y predominio del Item 2.02 y anexos \texttt{EX-99.1} en los Form 8-K.]}
+
+\section{Gatekeeper Semántico Few-Shot y poda de ruido}
+La auditoría inicial de las 89.846 noticias evidenció un elevado porcentaje de contenido fuera de dominio, menciones incidentales y colisiones de subcadenas en \textit{tickers} de dos letras (\texttt{GS}, \texttt{MS}). Para evitar diluir la señal y desperdiciar cómputo en inferencia de sentimiento, se evaluó una matriz experimental $2 \times 2$ (Cross-Encoder NLI frente a Bi-Encoder; Zero-Shot frente a Few-Shot), descartando \texttt{distilbert-base-uncased-mnli} por colapso hacia categorías legales y adoptando un \textbf{Gatekeeper Prototípico Few-Shot} (\texttt{sentence-transformers/all-MiniLM-L6-v2}) en \texttt{src/articulos/models/categorizador/}.
+
+\begin{itemize}
+    \item \textbf{Centroides hiperesféricos ($\mathbb{S}^{383}$):} Representación de 7 categorías mediante prototipos canónicos e inferencia vectorial en CPU ($\sim 25\text{\,ms/doc}$).
+    \item \textbf{Extracción centrada en entidad:} Ponderación adaptativa (65\,\% titular y 35\,\% fragmento relevante) mediante expresiones regulares con fronteras de palabra (\texttt{\textbackslash b}).
+    \item \textbf{Reglas de desambiguación (v2):} Detección de rol de analista (\texttt{es\_rol\_analista\_tercero}), contaminación cruzada de competidor en titular y plantillas 13F/resúmenes multi-ticker. Sobre el corpus completo, la versión v2 podó el \textbf{69,71\,\% de ruido} (62.629 descartadas), conservando \textbf{27.217--27.350 artículos útiles} en capa Silver.
+\end{itemize}
+
+\section{Pipeline modular Silver y extracción de sentimiento}
+La transformación hacia Silver se desacopló en tres ETLs reproducibles (\texttt{etl\_categorizador.py}, \texttt{etl\_sentimientos.py} y el orquestador \texttt{etl\_silver.py}) con cachés duales locales/R2 indexados por \texttt{cat\_hash} e \texttt{input\_hash}:
+
+\begin{itemize}
+    \item \textbf{Motor agnóstico de sentimiento (\texttt{BaseSentimentEngine}):} Define contratos estrictos en Pydantic V2 y desacopla la lógica de inferencia.
+    \item \textbf{Inferencia LLM (\texttt{AnthropicSentimentEngine}):} Ejecución sobre los \textbf{27.350 artículos relevantes} alcanzando un \textbf{88,8\,\% de exactitud} frente al \textit{Ground Truth} (\texttt{v3}) con un coste total de \textbf{1,29\,USD}, auditado en \texttt{silver\_sentimientos\_eda.ipynb} junto con cruces preliminares por \texttt{category $\times$ market\_session} frente a retornos de \texttt{yfinance}.
+    \item \textbf{Comparativa / Inferencia FinBERT:} \textit{[Completar con los resultados de inferencia por lotes de \texttt{ProsusAI/finbert} (polaridad continua $S = P(+) - P(-)$ y convicción $C = 1 - P(\text{Neutral})$) y comparativa de acuerdo frente al motor LLM.]}
+\end{itemize}
+
+\section{Alineación temporal Point-in-Time (Zero Data Leakage)}
+\textit{[Completar: detallar el protocolo de sincronización horaria en \texttt{America/New\_York}, el corte estricto previo a la apertura de la NYSE (09:30 AM ET) mediante \texttt{pandas.merge\_asof(direction="backward")} y el tratamiento de noticias acumuladas en sesiones no hábiles.]}
