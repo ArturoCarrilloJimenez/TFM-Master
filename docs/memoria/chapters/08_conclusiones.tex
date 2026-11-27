@@ -4,14 +4,15 @@
 \textit{[PENDIENTE FASE 4 --- Valorar de forma crítica el grado de cumplimiento de los objetivos específicos OE1--OE5, validando o matizando las hipótesis iniciales sobre el poder informativo del sentimiento pre-apertura en el sector bancario estadounidense.]}
 
 \section{Análisis de impacto operativo y retorno de inversión (ROI)}
-\textit{[PENDIENTE FASE 4 (Requisito explícito de EBIS) --- Traducir las métricas estadísticas del modelo y el coste operativo nulo de la arquitectura (\textit{Always Free}) a valor de negocio para mesas de tesorería, gestión de carteras o sistemas \textit{Robo-Advisor}: reducción de exposición ante eventos de cola, dimensionamiento dinámico del riesgo y ahorro frente a proveedores comerciales de datos y APIs.]}
+\textit{[PENDIENTE FASE 4 (Requisito explícito de EBIS) --- Traducir las métricas estadísticas del modelo y la infraestructura \textit{Always Free} (0,00\,€ fijos más 1,29\,USD históricos de inferencia LLM) a valor de negocio para mesas de tesorería, gestión de carteras o sistemas \textit{Robo-Advisor}: reducción de exposición ante eventos de cola, dimensionamiento dinámico del riesgo y ahorro frente a proveedores comerciales de datos y APIs.]}
 
 \section{Limitaciones del estudio}
-\textit{[Completar: limitaciones observadas en cobertura histórica de prensa, latencia de publicación de anexos SEC, restricciones de cómputo sin GPU dedicada en producción, etc.]}
+\textit{[Completar: limitaciones observadas en cobertura histórica de prensa (registros \texttt{date\_only} desplazados a $t+1$), latencia de publicación de anexos SEC, restricciones de cómputo sin GPU dedicada en producción y naturaleza no calibrada vía \textit{logprobs} de las puntuaciones del LLM.]}
 
 \section{Líneas futuras de trabajo}
 \begin{itemize}
     \item Extensión del universo de estudio hacia otros sectores sistémicos (tecnología, energía) o índices europeos.
-    \item Incorporación de datos macroeconómicos de alta frecuencia (FRED) y análisis específico de los anexos \texttt{EX-99.1} e informes trimestrales \texttt{10-Q/10-K}.
-    \item Integración en tiempo real de ingesta continua mediante el motor de \textit{Web Scraping} distribuido y calibración conformal de intervalos (\textit{Conformalized Quantile Regression}).
+    \item Destilación de conocimiento (\textit{Teacher--Student}): entrenar un \textit{encoder} ligero condicionado a entidad (p.\,ej. \texttt{DeBERTa-v3-base} / \texttt{FinBERT} en ONNX CPU) a partir de los 24.900 ejemplos etiquetados por Claude para eliminar el coste por token en escenarios de escalado masivo, o implementar un enrutamiento híbrido en cascada por confianza.
+    \item Extensión del motor LLM con \textit{prompt} contable dedicado (\texttt{sec\_v1}) sobre anexos \texttt{EX-99.1} e informes trimestrales \texttt{10-Q/10-K}, además de la incorporación de series macroeconómicas (FRED).
+    \item Calibración conformal de intervalos (\textit{Conformalized Quantile Regression}) e integración continua en vivo mediante \texttt{WebScrapingDistributed}.
 \end{itemize}

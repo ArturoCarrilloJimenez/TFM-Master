@@ -1,26 +1,3 @@
-\chapter{Registro de Decisiones Arquitectónicas (ADRs)}
-
-Como respaldo de ingeniería al cuerpo principal de la memoria, se resumen las decisiones técnicas críticas adoptadas durante el ciclo de vida del proyecto:
-
-\begin{table}[H]
-    \centering
-    \caption{Resumen de Architecture Decision Records (ADRs) del proyecto.}
-    \label{tab:adrs_resumen}
-    \begin{tabularx}{\textwidth}{@{}l >{\raggedright\arraybackslash}p{4.3cm} >{\raggedright\arraybackslash}X@{}}
-        \toprule
-        \textbf{ID} & \textbf{Decisión clave} & \textbf{Justificación técnica y consecuencia} \\
-        \midrule
-        ADR-001 & Cloudflare R2 frente a AWS S3 & API S3 v4 compatible con 0\,€ en \textit{egress} y capa gratuita perpetua de 10\,GB. \\
-        ADR-002 & FinBERT frente a LLM genéricos & Inferencia determinista local en CPU sin latencia ni coste por token en producción. \\
-        ADR-003 & Regresión cuantílica frente a clasificación & Estimación de intervalo al 80\,\% $[y_{0.10}, y_{0.90}]$ como medida directa de riesgo condicional. \\
-        ADR-004 & Alineación \texttt{merge\_asof} hacia atrás & Erradicación formal de \textit{Look-Ahead Bias} respecto al corte de apertura NYSE. \\
-        ADR-005 & Gatekeeper Few-Shot (\texttt{all-MiniLM-L6-v2}) & Poda del 69,71\,\% de ruido (v2) en $\sim 25\text{\,ms/doc}$ frente al colapso multiclase de NLI. \\
-        ADR-006 & Estándar KISS \& DRY en infraestructura & Reutilización estricta de \texttt{ParquetCompactor} y \texttt{S3StorageRepository} evitando fugas de conexión. \\
-        ADR-007 & Parquet desacoplado para anexos 8-K & Almacenamiento separado de 5.531 \texttt{EX-*} enlazados por \texttt{accession\_number} sin romper esquemas previos. \\
-        \bottomrule
-    \end{tabularx}
-\end{table}
-
 \chapter{Esquemas de Datos y Reproducción del Entorno}
 
 \section{Catálogo de conjuntos de datos en Cloudflare R2}

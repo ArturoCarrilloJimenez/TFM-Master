@@ -1,25 +1,149 @@
 \chapter{Auditoría Exploratoria y Preprocesamiento (Capa Silver)}
 
 \section{Análisis exploratorio de las fuentes Bronze}
-\textit{[Completar con gráficas exportadas a \texttt{figures/} desde los notebooks \texttt{Yfinance\_2010\_2023\_EDA.ipynb}, \texttt{ExplorarDatasetsSec.ipynb} y \texttt{multisource\_financial\_news\_EDA\_2010\_2023.ipynb}: distribución anual por banco, retornos logarítmicos, colas pesadas, y predominio del Item 2.02 y anexos \texttt{EX-99.1} en los Form 8-K.]}
+\textit{[Completar con gráficas estandarizadas en \texttt{figures/} desde los notebooks \texttt{Yfinance\_\allowbreak 2010\_2023\_EDA.ipynb}, \texttt{Explorar\allowbreak DatasetsSec.ipynb} y \texttt{multisource\_\allowbreak financial\_news\_\allowbreak EDA\_2010\_2023.ipynb}: distribución anual por banco, retornos logarítmicos, colas pesadas, disponibilidad horaria ET y predominio del Item 2.02 y anexos \texttt{EX-99.1} en los Form 8-K.]}
 
 \section{Gatekeeper Semántico Few-Shot y poda de ruido}
-La auditoría inicial de las 89.846 noticias evidenció un elevado porcentaje de contenido fuera de dominio, menciones incidentales y colisiones de subcadenas en \textit{tickers} de dos letras (\texttt{GS}, \texttt{MS}). Para evitar diluir la señal y desperdiciar cómputo en inferencia de sentimiento, se evaluó una matriz experimental $2 \times 2$ (Cross-Encoder NLI frente a Bi-Encoder; Zero-Shot frente a Few-Shot), descartando \texttt{distilbert-base-uncased-mnli} por colapso hacia categorías legales y adoptando un \textbf{Gatekeeper Prototípico Few-Shot} (\texttt{sentence-transformers/all-MiniLM-L6-v2}) en \texttt{src/articulos/models/categorizador/}.
+La auditoría inicial de las 89.846 noticias en Capa Bronze evidenció tres patologías estructurales propias de los agregadores financieros: contaminación multi-\textit{ticker} (\textit{ticker bleed}), un 25,61\,\% de noticias huérfanas sin cuerpo (23.010 registros) y colisiones de subcadenas en \textit{tickers} de dos letras (\texttt{GS}, \texttt{MS}). Pasar este volumen crudo al motor de sentimiento diluiría la señal corporativa y multiplicaría el coste de inferencia. Por ello, se diseñó un filtro semántico previo (\textbf{Gatekeeper}) en \texttt{src/articulos/models/categorizador/} tras comparar sistemáticamente los dos paradigmas transversales de clasificación sin entrenamiento supervisado:
 
 \begin{itemize}
-    \item \textbf{Centroides hiperesféricos ($\mathbb{S}^{383}$):} Representación de 7 categorías mediante prototipos canónicos e inferencia vectorial en CPU ($\sim 25\text{\,ms/doc}$).
-    \item \textbf{Extracción centrada en entidad:} Ponderación adaptativa (65\,\% titular y 35\,\% fragmento relevante) mediante expresiones regulares con fronteras de palabra (\texttt{\textbackslash b}).
-    \item \textbf{Reglas de desambiguación (v2):} Detección de rol de analista (\texttt{es\_rol\_analista\_tercero}), contaminación cruzada de competidor en titular y plantillas 13F/resúmenes multi-ticker. Sobre el corpus completo, la versión v2 podó el \textbf{69,71\,\% de ruido} (62.629 descartadas), conservando \textbf{27.217--27.350 artículos útiles} en capa Silver.
+    \item \textbf{Clasificación \textit{Zero-Shot} vía inferencia de lenguaje natural (NLI / \textit{Cross-Encoder}):} Introducida por Yin, Hay y Roth~\cite{yin2019zeroshot}, reformula la clasificación temática como un problema de implicación textual sobre modelos entrenados en \textit{MultiNLI}~\cite{williams2018mnli} (en nuestro piloto, \texttt{distilbert-base-uncased-mnli}~\cite{sanh2019distilbert}). El modelo concatena cada documento con cada hipótesis de clase (\texttt{[CLS] texto [SEP] hipótesis}) y evalúa la probabilidad de implicación mediante atención cruzada. Aunque resulta flexible, su coste escala como $O(N \cdot K)$ pasadas completas del \textit{Transformer} y mostró un \textbf{colapso sistemático hacia la categoría \texttt{legal}} debido al sesgo léxico del vocabulario regulatorio compartido en prensa financiera.
+    \item \textbf{\textit{Bi-Encoder} con Redes Prototípicas \textit{Few-Shot}:} Combina los \textit{Sentence Embeddings} siameses propuestos por Reimers y Gurevych~\cite{reimers2019sbert} sobre un modelo ligero destilado (\texttt{all-MiniLM-L6-v2}~\cite{wang2020minilm}, 6 capas y 384 dimensiones) con el principio de \textbf{Redes Prototípicas} de Snell, Swersky y Zemel~\cite{snell2017prototypical}. Al codificar cada texto una sola vez sobre la hiperesfera unidad ($\mathbf{e} \in \mathbb{S}^{383}$, $\|\mathbf{e}\|_2 = 1$), la clasificación frente a $K=7$ centroides precomputados se reduce a un producto matricial de complejidad lineal $O(N)$ ($\sim 25\text{\,ms/doc}$ en CPU), evitando el sesgo de las descripciones abstractas mediante ejemplares canónicos reales (Tabla~\ref{tab:comparativa_gatekeeper} y Figura~\ref{fig:cross_vs_biencoder}).
 \end{itemize}
+
+\begin{table}[H]
+    \centering
+    \caption{Comparativa experimental $2 \times 2$ de arquitecturas de filtrado semántico (\textit{Cross-Encoder} NLI frente a \textit{Bi-Encoder} Prototípico).}
+    \label{tab:comparativa_gatekeeper}
+    \renewcommand{\arraystretch}{1.2}
+    \footnotesize
+    \begin{tabularx}{\textwidth}{@{}p{2.7cm}p{1.9cm}cp{2.7cm}X@{}}
+        \toprule
+        \textbf{Arquitectura} & \textbf{Régimen} & \textbf{Coste} & \textbf{Modelo} & \textbf{Hallazgo empírico y decisión} \\
+        \midrule
+        Cross-Encoder NLI~\cite{yin2019zeroshot} & Zero-Shot & $O(N{\cdot}K)$ & \texttt{distilbert-\allowbreak mnli}~\cite{sanh2019distilbert} & Colapso hacia \texttt{legal} por sesgo léxico y alta latencia en CPU. \textbf{Descartado.} \\
+        Bi-Encoder~\cite{reimers2019sbert} & Zero-Shot & $O(N)$ & \texttt{all-MiniLM-\allowbreak L6-v2}~\cite{wang2020minilm} & Rápido, pero las descripciones abstractas solapan \texttt{m\&a} con ruido de mercado. \textbf{Descartado.} \\
+        Bi-Encoder + Prototipos~\cite{snell2017prototypical} & Few-Shot (v1) & $O(N)$ & \texttt{all-MiniLM-\allowbreak L6-v2} & Elimina el colapso legal, pero mantiene 60,0\,\% de precisión por huérfanas y \textit{fallbacks}. \textbf{Iterado.} \\
+        \textbf{Bi-Encoder + Reglas (v2)} & \textbf{Few-Shot + Anclaje} & $\mathbf{O(N)}$ & \textbf{\texttt{all-MiniLM-\allowbreak L6-v2}} & \textbf{83,3\,\% de precisión directa (96,7\,\% núcleo limpio), 98,0\,\% anclaje y $\sim$25\,ms/doc. Adoptado.} \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[node distance=0.8cm and 1.2cm]
+        % Rama superior: Cross-Encoder NLI
+        \node[tfmnode, text width=3.4cm, draw=red!55!black, fill=red!5] (ce_in) {\textbf{Cross-Encoder NLI~\cite{yin2019zeroshot}}\\\texttt{[CLS]} texto \texttt{[SEP]} $h_k$\\repetido $K=7$ veces};
+        \node[tfmnode, right=1.35cm of ce_in, text width=3.5cm, draw=red!55!black, fill=white] (ce_mod) {Atención cruzada\\\texttt{distilbert-mnli}\\Coste $O(N \cdot K)$};
+        \node[tfmnode, right=1.35cm of ce_mod, text width=3.3cm, draw=red!55!black, fill=red!5] (ce_out) {\textit{Softmax} NLI\\Sesgo léxico $\rightarrow$ colapso\\en clase \texttt{legal}};
+
+        % Rama inferior: Bi-Encoder Prototípico
+        \node[tfmnode, below=0.95cm of ce_in, text width=3.4cm, draw=CyanAccent, fill=LightTint] (bi_in) {\textbf{Bi-Encoder Few-Shot~\cite{reimers2019sbert,snell2017prototypical}}\\Titular (0,65) + Fragmento (0,35)\\codificado 1 sola vez};
+        \node[tfmaccent, right=1.35cm of bi_in, text width=3.5cm] (bi_mod) {\texttt{all-MiniLM-L6-v2}\\Proyección $\mathbf{v} \in \mathbb{S}^{383}$\\Coste lineal $O(N)$};
+        \node[tfmnode, right=1.35cm of bi_mod, text width=3.3cm, draw=NavyPrimary, fill=LightTint] (bi_out) {Similitud coseno $\mathbf{v}^\top \mathbf{c}_k$\\7 centroides prototípicos\\+ reglas sintácticas v2};
+
+        \draw[tfmarrow, draw=red!55!black] (ce_in) -- node[above, tfmlabel] {$K$ pasadas} (ce_mod);
+        \draw[tfmarrow, draw=red!55!black] (ce_mod) -- node[above, tfmlabel] {lento} (ce_out);
+        \draw[tfmarrow, draw=CyanAccent] (bi_in) -- node[above, tfmlabel] {1 pasada} (bi_mod);
+        \draw[tfmarrow, draw=CyanAccent] (bi_mod) -- node[above, tfmlabel] {25\,ms/doc} (bi_out);
+    \end{tikzpicture}%
+    }
+    \caption{Contraste arquitectónico entre clasificación \textit{Zero-Shot} mediante \textit{Cross-Encoder} NLI ($O(N \cdot K)$, descartada) y \textit{Bi-Encoder} Prototípico \textit{Few-Shot} ($O(N)$, adoptada en producción).}
+    \label{fig:cross_vs_biencoder}
+\end{figure}
+
+\subsection{Funcionamiento interno del Gatekeeper Prototípico}
+El clasificador implementado en \texttt{src/articulos/models/categorizador/} ejecuta tres etapas deterministas:
+
+\begin{enumerate}
+    \item \textbf{Construcción de centroides prototípicos~\cite{snell2017prototypical}:} Para cada una de las $K=7$ categorías canónicas (6 temáticas financieras más \texttt{ruido}) se codifican entre 4 y 7 titulares ejemplares reales $\mathcal{E}_k$ (\texttt{categories.py}) y se obtiene su centroide normalizado $\mathbf{c}_k = \frac{\sum_{i \in \mathcal{E}_k} \mathbf{e}_i}{\|\sum_{i \in \mathcal{E}_k} \mathbf{e}_i\|_2}$.
+    \item \textbf{Representación ponderada centrada en entidad:} Para resolver artículos largos multi-tópico sin truncar ciegamente a 256 \textit{tokens}, se extrae el fragmento (\texttt{process\_text}) que contiene al banco objetivo mediante expresiones regulares con fronteras de palabra (\texttt{\textbackslash b}) sobre sus alias oficiales y se combina con el titular:
+    \begin{equation}
+        \mathbf{v} = \frac{0{,}65\,\mathbf{e}_{\text{titular}} + 0{,}35\,\mathbf{e}_{\text{fragmento}}}{\|0{,}65\,\mathbf{e}_{\text{titular}} + 0{,}35\,\mathbf{e}_{\text{fragmento}}\|_2}
+        \label{eq:gatekeeper_blend}
+    \end{equation}
+    \item \textbf{Clasificación en $O(N)$ y filtros de saliencia (v2):} La afinidad semántica se calcula mediante producto escalar ($\cos(\mathbf{v}, \mathbf{c}_k) = \mathbf{v}^\top \mathbf{c}_k$) frente a umbrales adaptativos $\tau$, acoplada a reglas sintácticas que neutralizan el rol de analista sobre terceros (\texttt{es\_rol\_\allowbreak analista\_tercero}), la contaminación de competidores en el titular y las plantillas robotizadas 13F/ETF.
+\end{enumerate}
+
+\subsection{Auditoría iterativa (v1 vs. v2) y retención final en Capa Silver}
+Para validar empíricamente la pureza del filtro se realizaron dos auditorías estratificadas manuales ($N=60$: 30 noticias aprobadas y 30 descartadas, 5 por banco) acompañadas de un diagnóstico programático de falsos positivos. La versión inicial (v1, 37.359 útiles) presentó una precisión muestral del \textbf{60,0\,\%} al infiltrarse cinco vectores de error: noticias huérfanas sin cuerpo ni mención al banco (\texttt{FP\_1}), \textit{fallbacks} genéricos sin banco (\texttt{FP\_2}), titulares protagonizados por otro banco (\texttt{FP\_3}), el banco citado como casa de análisis de terceros (\texttt{FP\_4}) y plantillas 13F/ETF (\texttt{FP\_5}).
+
+Al corregir en origen el extractor secundario de contexto (\texttt{process\_text}) y exigir anclaje explícito de entidad en v2, los errores estructurales \texttt{FP\_1} y \texttt{FP\_2} se redujeron un \textbf{98,3\,\%} y el anclaje verificable del banco pasó del \textbf{80,05\,\% al 97,98\,\%}. Además, la auditoría demostró que aplicar reglas \textit{regex} rígidas en post-procesado sobre \texttt{FP\_3} y \texttt{FP\_4} generaba falsos negativos masivos (descartando entre un 80\,\% y un 100\,\% de noticias reales de resultados y \textit{upgrades}), confirmando la superioridad del anclaje semántico en origen. Sobre las 89.846 noticias de Bronze, el Gatekeeper v2 consolidado en Silver eliminó el \textbf{69,56\,\% de ruido} (62.496 artículos), conservando exactamente \textbf{27.350 noticias útiles} (Tabla~\ref{tab:retencion_gatekeeper} y Figura~\ref{fig:auditoria_gatekeeper}).
+
+\begin{table}[H]
+    \centering
+    \caption{Retención final por entidad bancaria tras la poda del Gatekeeper v2 (Capa Bronze $\rightarrow$ Capa Silver definitiva, 2010--2023).}
+    \label{tab:retencion_gatekeeper}
+    \small
+    \begin{tabular}{@{}lrrrr@{}}
+        \toprule
+        \textbf{Ticker} & \textbf{Bronze (crudo)} & \textbf{Silver útil} & \textbf{Descartadas (ruido)} & \textbf{Tasa de retención} \\
+        \midrule
+        \texttt{JPM} & 18.953 & 4.315 & 14.638 & 22,77\,\% \\
+        \texttt{BAC} & 11.509 & 2.861 & 8.648  & 24,86\,\% \\
+        \texttt{WFC} & 16.075 & 5.388 & 10.687 & 33,52\,\% \\
+        \texttt{C}   & 8.647  & 4.299 & 4.348  & 49,72\,\% \\
+        \texttt{GS}  & 18.321 & 5.133 & 13.188 & 28,02\,\% \\
+        \texttt{MS}  & 16.341 & 5.354 & 10.987 & 32,76\,\% \\
+        \midrule
+        \textbf{Total US Big 6} & \textbf{89.846} & \textbf{27.350} & \textbf{62.496} & \textbf{30,44\,\%} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/silver_gatekeeper_auditoria.pdf}
+    \caption{Evolución de la calidad del Gatekeeper entre las iteraciones v1 y v2 según auditoría manual ($N=60$) y anclaje de entidad (izquierda), junto con la distribución temática final de las 27.350 noticias útiles en Capa Silver (derecha).}
+    \label{fig:auditoria_gatekeeper}
+\end{figure}
 
 \section{Pipeline modular Silver y extracción de sentimiento}
-La transformación hacia Silver se desacopló en tres ETLs reproducibles (\texttt{etl\_categorizador.py}, \texttt{etl\_sentimientos.py} y el orquestador \texttt{etl\_silver.py}) con cachés duales locales/R2 indexados por \texttt{cat\_hash} e \texttt{input\_hash}:
+La transformación hacia Silver se desacopló en tres módulos: \texttt{etl\_categorizador.py}, \texttt{etl\_sentimientos.py} y el orquestador \texttt{etl\_silver.py}, con cachés duales locales/R2 indexados por \texttt{cat\_hash} e \texttt{input\_hash} (Figura~\ref{fig:flujo_silver_pit}).
+
+\subsection{Funcionamiento interno: FinBERT frente al LLM dirigido al ticker}
+El salto empírico observado en noticias obedece directamente a diferencias estructurales en cómo procesan el texto ambos paradigmas:
 
 \begin{itemize}
-    \item \textbf{Motor agnóstico de sentimiento (\texttt{BaseSentimentEngine}):} Define contratos estrictos en Pydantic V2 y desacopla la lógica de inferencia.
-    \item \textbf{Inferencia LLM (\texttt{AnthropicSentimentEngine}):} Ejecución sobre los \textbf{27.350 artículos relevantes} alcanzando un \textbf{88,8\,\% de exactitud} frente al \textit{Ground Truth} (\texttt{v3}) con un coste total de \textbf{1,29\,USD}, auditado en \texttt{silver\_sentimientos\_eda.ipynb} junto con cruces preliminares por \texttt{category $\times$ market\_session} frente a retornos de \texttt{yfinance}.
-    \item \textbf{Comparativa / Inferencia FinBERT:} \textit{[Completar con los resultados de inferencia por lotes de \texttt{ProsusAI/finbert} (polaridad continua $S = P(+) - P(-)$ y convicción $C = 1 - P(\text{Neutral})$) y comparativa de acuerdo frente al motor LLM.]}
+    \item \textbf{FinBERT (\texttt{ProsusAI/finbert}~\cite{araci2019finbert}):} Es un codificador \textbf{BERT-base}~\cite{devlin2019bert} (12 capas, 110\,M de parámetros, ventana máxima de 512 \textit{tokens}) con atención bidireccional y una cabeza lineal más \textit{softmax} sobre el vector del \textit{token} \texttt{[CLS]} que estima $(P_{\text{pos}}, P_{\text{neg}}, P_{\text{neu}})$ y polaridad continua $S = P_{\text{pos}} - P_{\text{neg}}$. Al comprimir todo el fragmento en una única representación global sin condicionamiento a entidad (\textit{Aspect-Based Sentiment}), cuando una noticia menciona varios bancos simultáneamente o cita la opinión de un analista sobre un tercero, mezcla las señales y colapsa hacia la clase neutra o invierte el signo.
+    \item \textbf{LLM dirigido al \textit{ticker} (\texttt{AnthropicSentimentEngine} / \texttt{claude-\allowbreak haiku-5-5}):} Es un \textbf{Transformer \textit{Decoder-only}} con atención causal condicionado explícitamente a un \textit{System Prompt} institucional que fija el banco objetivo (\texttt{TARGET BANK}) y reglas de exclusión (mandatos M\&A rutinarios, previas de resultados, opiniones sobre terceros). Al procesar el titular y la ventana adaptativa (\texttt{RE\_ADAPTATIVA}) bajo estas restricciones, el mecanismo de autoatención resuelve la correferencia entidad--evento y emite un contrato JSON validado con Pydantic V2 (\texttt{sentiment\_label}, \texttt{sentiment\_score} $\in [-1, 1]$ como intensidad semántica acotada y \texttt{sentiment\_motivo}).
 \end{itemize}
 
+\subsection{Resultados comparativos y validación empírica}
+\begin{itemize}
+    \item \textbf{Motor agnóstico (\texttt{BaseSentimentEngine}):} Define contratos estrictos en Pydantic V2 y desacopla la lógica de inferencia por proveedor.
+    \item \textbf{Inferencia LLM en noticias (\texttt{AnthropicSentimentEngine}):} Ejecución con \texttt{claude-\allowbreak haiku-5-5} (Anthropic Batch API, $-50$\,\% de coste, \texttt{batch\_size=10}) sobre los \textbf{27.350 artículos relevantes} (24.900 \textit{hashes} únicos, $-9{,}0$\,\% por deduplicación, 0 nulos) por un coste total de \textbf{1,29\,USD}. Sobre el \textit{Ground Truth} manual (\texttt{143/150} artículos tras la poda del \textit{Gatekeeper}), alcanzó \textbf{88,8\,\% de exactitud} (\textit{F1-Macro} 0,884 y solo \textbf{1} inversión grave $+1 \leftrightarrow -1$), demostrando además aislamiento multi-entidad (etiqueta diferenciada en el 24,4\,\% de las 3.684 noticias compartidas por $\ge 2$ bancos) y validación económica externa frente a \texttt{yfinance} (spread diario contemporáneo de \textbf{+158,1\,bps}, Pearson $= 0{,}278$ sobre 10.734 pares banco $\times$ sesión).
+    \item \textbf{Comparativa FinBERT / ABSA y rama SEC:} Sobre exactamente los mismos 143 artículos de prensa, \texttt{ProsusAI/finbert}~\cite{araci2019finbert} obtuvo \textbf{60,1\,\% de exactitud} (13 inversiones graves) y DeBERTa-v3 ABSA~\cite{he2021debertav3} \textbf{64,3\,\%} (4 inversiones graves), validando empíricamente la necesidad de extracción condicionada a la entidad objetivo. En paralelo, sobre la rama regulatoria SEC Form 8-K ($N=150$), la incorporación de anexos \texttt{EX-99.1} y la poda de cláusulas \textit{Safe Harbor} elevó la exactitud de FinBERT en \texttt{Item 2.02} del \textbf{14,0\,\% al 48,0\,\%} (75,33\,\% global).
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[node distance=1.0cm and 1.3cm]
+        \node[tfmdata, text width=2.3cm] (br) {R2 Bronze\\89.846 art.};
+        \node[tfmnode, right=of br, text width=3.1cm] (gk) {\textbf{Gatekeeper v2}\\\texttt{all-MiniLM-L6-v2}\\caché \texttt{cat\_hash}};
+        \node[tfmaccent, right=of gk, text width=3.4cm] (llm) {Claude Haiku 5.5\\Batch \texttt{b=10} (1,29\,USD)\\caché \texttt{input\_hash}};
+        \node[tfmdata, right=of llm, text width=2.5cm] (sl) {R2 Silver\\27.350 útiles};
+
+        \node[tfmnode, below=0.95cm of gk, text width=3.1cm, draw=MutedGray, fill=white] (ruido) {\color{MutedGray}Descartadas (ruido)\\62.496 (69,56\,\%)};
+        \node[tfmnode, below=0.95cm of sl.south, anchor=north east, xshift=1.4cm, text width=6.1cm] (pit) {\textbf{Alineación Point-in-Time (NY ET)}\\\texttt{premarket} $\rightarrow$ sesión día $t$\\\texttt{intraday} / \texttt{afterhours} / \texttt{date\_only} $\rightarrow$ día $t+1$};
+
+        \draw[tfmarrow] (br) -- (gk);
+        \draw[tfmarrow] (gk) -- node[above, tfmlabel] {27.350} (llm);
+        \draw[tfmarrow] (gk) -- node[right, tfmlabel] {poda} (ruido);
+        \draw[tfmarrow] (llm) -- node[above, tfmlabel] {24.900 únicos} (sl);
+        \draw[tfmarrow] (sl.south) -- node[right, tfmlabel] {NY ET} (sl.south |- pit.north);
+    \end{tikzpicture}%
+    }
+    \caption{Flujo de procesamiento modular de la Capa Silver de noticias (cachés duales, poda semántica, inferencia LLM y regla temporal \textit{Point-in-Time}).}
+    \label{fig:flujo_silver_pit}
+\end{figure}
+
 \section{Alineación temporal Point-in-Time (Zero Data Leakage)}
-\textit{[Completar: detallar el protocolo de sincronización horaria en \texttt{America/New\_York}, el corte estricto previo a la apertura de la NYSE (09:30 AM ET) mediante \texttt{pandas.merge\_asof(direction="backward")} y el tratamiento de noticias acumuladas en sesiones no hábiles.]}
+Para erradicar el sesgo de mirada al futuro (\textit{Look-Ahead Bias}), la integración entre el flujo textual (noticias y hechos relevantes SEC) y las sesiones bursátiles de la NYSE se realiza en horario oficial de Wall Street (\texttt{America/New\_York}) respetando el corte operativo previo a la apertura (08:30--09:30 AM ET) mediante \texttt{pandas.merge\_asof(\allowbreak direction="backward")}:
+
+\begin{itemize}
+    \item \textbf{Registros con marca horaria exacta (\texttt{has\_exact\_time=True}):} Las publicaciones en \texttt{premarket} (antes de las 09:30 AM ET) quedan disponibles para la sesión del día $t$, mientras que las ocurridas en \texttt{intraday} (09:30--16:00 ET), \texttt{afterhours} ($\ge$ 16:00 ET) o días no hábiles (fines de semana y festivos NYSE) se asignan al siguiente día hábil de cotización ($t+1$).
+    \item \textbf{Registros sin marca horaria (\texttt{has\_exact\_time=False}, \texttt{date\_only}):} Dado que una noticia fechada únicamente a nivel de día calendario (\texttt{00:00:00}) pudo haberse publicado durante la sesión o tras el cierre del mercado, se aplica una \textbf{regla conservadora de desplazamiento al día hábil siguiente ($t+1$)}. Con ello se garantiza estrictamente que ninguna información exógena con incertidumbre horaria contamine la predicción del día $t$.
+\end{itemize}

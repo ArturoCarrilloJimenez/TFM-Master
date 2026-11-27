@@ -5,22 +5,36 @@
 Documentar en este apartado:
 \begin{itemize}
     \item \textbf{Variables cuantitativas:} retornos logarítmicos rezagados, volatilidad móvil (\textit{rolling volatility}), RSI, medias móviles (SMA/EMA) y volumen relativo.
-    \item \textbf{Variables de sentimiento y cobertura:} agregación por ventana previa a apertura, mitigación de días sin noticias ($\ln(1+N)$, indicador \texttt{has\_news\_today}, soporte nativo de \texttt{NaN}), peso de eventos SEC 8-K y esquema de atenuación temporal elegido.
+    \item \textbf{Variables de sentimiento y cobertura:} agregación por ventana previa a apertura respetando el desplazamiento $t+1$ de registros \texttt{date\_only}, selección de señal no colineal (\texttt{sentiment\_score} frente a probabilidades redundantes para preservar atribución en Boruta y TreeSHAP), mitigación de días sin noticias ($\ln(1+N)$, indicador \texttt{has\_news\_today}, soporte nativo de \texttt{NaN}), peso de eventos SEC 8-K y esquema de atenuación temporal ($T_{1/2}$).
 \end{itemize}
 \end{cajadestacada}
 
 \section{Selección de características mediante Boruta}
-\textit{[PENDIENTE FASE 3 --- Documentar el filtrado de variables redundantes o ruidosas mediante Boruta sobre el conjunto tabular de entrenamiento sin sesgo por ticker.]}
+Para eliminar variables ruidosas o colineales antes del entrenamiento cuantílico se emplea \textbf{Boruta}~\cite{kursa2010boruta}, un algoritmo de selección \textit{wrapper} basado en bosques aleatorios que evalúa la relevancia estadística de cada predictor frente al azar puro:
+\begin{enumerate}
+    \item \textbf{Variables sombra (\textit{shadow features}):} Por cada variable real $X_j$, Boruta genera una copia permutada aleatoriamente $X_j^{\text{shadow}}$ que destruye cualquier relación real con el retorno futuro $y_{t+1}$.
+    \item \textbf{Contraste frente a MZSA:} Entrena un bosque aleatorio sobre el conjunto ampliado $[X, X^{\text{shadow}}]$, calcula la importancia normalizada (\textit{Z-score}) de todas las variables y fija como umbral la máxima importancia alcanzada por una sombra (\textit{Maximum Z-score among Shadow Attributes}, MZSA).
+    \item \textbf{Decisión binomial iterativa:} A lo largo de múltiples iteraciones, las variables que superan significativamente a MZSA según un contraste binomial se confirman como relevantes, mientras que las que quedan por debajo se podan definitivamente.
+\end{enumerate}
+\textit{[PENDIENTE FASE 3 --- Documentar el listado final de variables confirmadas y rechazadas por Boruta sobre el conjunto tabular de entrenamiento sin sesgo por ticker.]}
 
-\section{Formulación de Regresión Cuantílica}
-En lugar de estimar la esperanza condicional $E[y_{t+1} \mid X_t]$, se entrenan estimadores paralelos basados en árboles (\textit{LightGBM} y \textit{XGBoost} con \texttt{objective='quantile'}) minimizando la \textit{Pinball Loss} para los cuantiles $q \in \{0.10, 0.90\}$:
+\section{Formulación de Regresión Cuantílica (LightGBM y XGBoost)}
+En lugar de estimar la esperanza condicional $E[y_{t+1} \mid X_t]$, se adopta el marco de \textbf{regresión cuantílica} de Koenker y Bassett~\cite{koenker1978quantile} mediante estimadores paralelos basados en árboles de decisión de \textbf{\textit{Gradient Boosting}} (\textit{LightGBM}~\cite{ke2017lightgbm} y \textit{XGBoost}~\cite{chen2016xgboost} con \texttt{objective='quantile'}). Internamente, ambos modelos construyen una suma aditiva $\hat{y}_q^{(M)}(x) = \sum_{m=1}^{M} \eta \, f_m(x)$ donde cada nuevo árbol $f_m$ ajusta los pseudoresiduos (gradiente negativo) de la \textbf{\textit{Pinball Loss}} para el cuantil objetivo $q \in \{0{,}10,\, 0{,}90\}$:
 
 \begin{equation}
     \mathcal{L}_q(y, \hat{y}) = \max\Big(q(y - \hat{y}),\; (1 - q)(\hat{y} - y)\Big)
     \label{eq:pinball_loss}
 \end{equation}
 
-De este modo, la amplitud del túnel predicho $\Delta_t = \hat{y}_{0.90} - \hat{y}_{0.10}$ actúa como termómetro dinámico de volatilidad e incertidumbre condicional para el día siguiente.
+Mientras que \textbf{LightGBM}~\cite{ke2017lightgbm} discretiza variables continuas en histogramas y expande árboles hoja a hoja (\textit{leaf-wise}), logrando alta velocidad y captura fina de interacciones no lineales entre volatilidad y sentimiento, \textbf{XGBoost}~\cite{chen2016xgboost} crece nivel a nivel (\textit{depth-wise}) con regularización explícita $L_1/L_2$ sobre los pesos de las hojas para controlar el sobreajuste. Gracias al gradiente asimétrico de $\mathcal{L}_q$, el modelo $q=0{,}10$ penaliza nueve veces más subestimar una caída extrema que sobrestimarla, y el modelo $q=0{,}90$ hace lo inverso en subidas. Así, la amplitud del túnel predicho $\Delta_t = \hat{y}_{0.90} - \hat{y}_{0.10}$ actúa como termómetro dinámico de volatilidad e incertidumbre condicional para el día siguiente.
+
+\section{Explicabilidad interna mediante TreeSHAP}
+Para auditar qué peso real aporta cada variable técnica o textual a las bandas cuantílicas, se emplea \textbf{TreeSHAP}~\cite{lundberg2020treeshap} (\texttt{TreeExplainer}), que calcula de forma exacta los valores de Shapley de la teoría de juegos cooperativos explotando la estructura jerárquica de los árboles en tiempo polinómico $O(T L D^2)$ (siendo $T$ el número de árboles, $L$ las hojas máximas y $D$ la profundidad). Cada predicción cuantílica se descompone aditivamente como:
+\begin{equation}
+    \hat{y}_q(x) = \phi_0 + \sum_{j=1}^{p} \phi_j(x)
+    \label{eq:treeshap}
+\end{equation}
+donde $\phi_0$ es el valor base esperado y $\phi_j(x)$ cuantifica la contribución marginal exacta de la característica $j$ en esa sesión bursátil.
 
 \section{Protocolo de validación temporal y ajuste de hiperparámetros}
 \textit{[PENDIENTE FASE 3 --- Documentar esquema de particionado temporal estricto (\textit{Walk-Forward} / \textit{Purged K-Fold}), prevención de fuga serial y optimización de hiperparámetros.]}

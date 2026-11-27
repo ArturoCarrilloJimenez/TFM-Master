@@ -1,19 +1,18 @@
 \documentclass[11pt, a4paper]{report}
 
-% --- CODIFICACIÓN, IDIOMA Y TIPOGRAFÍA ---
+% --- CODIFICACIÓN, IDIOMA Y TIPOGRAFÍA (Mixta Editorial: Serif en cuerpo + Sans en títulos/figuras) ---
 % Compilar con XeLaTeX o LuaLaTeX (compatible con MiKTeX local y Overleaf)
 \usepackage{fontspec}
-\usepackage[english, spanish]{babel}
-\IfFileExists{C:/Windows/Fonts/segoeui.ttf}{
-    \setmainfont{Segoe UI}
+\usepackage[english, spanish, es-tabla]{babel}
+\IfFileExists{C:/Windows/Fonts/georgia.ttf}{
+    \setmainfont{Georgia}
     \setsansfont{Segoe UI}
     \setmonofont{Consolas}
 }{
-    \setmainfont{Noto Sans}
+    \setmainfont{Noto Serif}
     \setsansfont{Noto Sans}
     \setmonofont{Noto Sans Mono}
 }
-\renewcommand{\familydefault}{\sfdefault}
 
 % --- MÁRGENES Y GEOMETRÍA ---
 \usepackage[
@@ -25,11 +24,11 @@
     headheight=22pt
 ]{geometry}
 
-% --- PALETA DE COLORES FINTECH / BANCA INSTITUCIONAL ---
+% --- PALETA DE COLORES EDITORIAL / BANCA INSTITUCIONAL ---
 \usepackage[table]{xcolor}
 \definecolor{NavyPrimary}{HTML}{081C3F}    % Azul medianoche (dominante)
 \definecolor{CyanAccent}{HTML}{0077B6}     % Azul técnico (acento)
-\definecolor{SlateText}{HTML}{1E293B}      % Gris carbón para lectura cómoda
+\definecolor{SlateText}{HTML}{111827}      % Gris casi negro para máxima legibilidad editorial
 \definecolor{MutedGray}{HTML}{64748B}      % Gris pizarra para metadatos y pies
 \definecolor{LightTint}{HTML}{F1F5F9}      % Fondo sutil para tablas y cajas
 
@@ -43,9 +42,33 @@
 \graphicspath{{figures/}{../../img/}}
 \usepackage{float}
 \usepackage{subcaption}
-\usepackage[font=small, labelfont={bf, color=NavyPrimary}, textfont={color=MutedGray}]{caption}
+\usepackage[font={small, sf}, labelfont={bf, color=NavyPrimary}, textfont={color=MutedGray}]{caption}
 \usepackage{csquotes}
 \usepackage[most]{tcolorbox}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric}
+\tikzset{
+    tfmnode/.style={
+        rectangle, rounded corners=3pt, draw=NavyPrimary, line width=0.8pt,
+        fill=LightTint, text=SlateText, font=\sffamily\scriptsize,
+        align=center, minimum height=0.95cm, inner sep=4pt
+    },
+    tfmaccent/.style={
+        rectangle, rounded corners=3pt, draw=CyanAccent, line width=1pt,
+        fill=CyanAccent!12, text=NavyPrimary, font=\sffamily\scriptsize\bfseries,
+        align=center, minimum height=0.95cm, inner sep=4pt
+    },
+    tfmdata/.style={
+        cylinder, shape border rotate=90, aspect=0.20, draw=NavyPrimary, line width=0.8pt,
+        fill=NavyPrimary!8, text=NavyPrimary, font=\sffamily\scriptsize\bfseries,
+        align=center, minimum height=1.0cm, inner sep=4pt
+    },
+    tfmarrow/.style={
+        -{Stealth[length=2.2mm, width=1.6mm]}, draw=NavyPrimary, line width=0.85pt
+    },
+    tfmlabel/.style={
+        font=\sffamily\tiny\color{MutedGray}, align=center
+    }
+}
 \usepackage{listings}
 
 % --- ESTILO DE BLOQUES DE CÓDIGO ---
@@ -85,6 +108,10 @@
 
 % --- BIBLIOGRAFÍA (BibLaTeX + Biber) ---
 \usepackage[backend=biber, style=ieee, sorting=none]{biblatex}
+\DefineBibliographyStrings{spanish}{
+    url = {Disponible en},
+    urlseen = {Consultado el}
+}
 \addbibresource{referencias.bib}
 
 % --- CABECERAS, PIES Y LISTAS ---
@@ -94,6 +121,7 @@
 \setlist[enumerate]{label=\textcolor{NavyPrimary}{\textbf{\arabic*.}}, leftmargin=1.5em}
 
 % --- ENLACES Y METADATOS PDF ---
+\usepackage{xurl}
 \usepackage{hyperref}
 \hypersetup{
     colorlinks=true,
@@ -107,22 +135,22 @@
 % --- ESTILO DE PÁGINA INTERIOR ---
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{\footnotesize\color{MutedGray}\textsc{Motor Predictivo Híbrido de Mercados Financieros (US Big 6)}}
-\fancyhead[R]{\footnotesize\color{MutedGray}\thepage}
+\fancyhead[L]{\footnotesize\sffamily\color{MutedGray}\textsc{Motor Predictivo Híbrido de Mercados Financieros (US Big 6)}}
+\fancyhead[R]{\footnotesize\sffamily\color{MutedGray}\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\headrule}{\hbox to\headwidth{\color{LightTint}\leaders\hrule height \headrulewidth\hfill}}
 
 \fancypagestyle{plain}{
     \fancyhf{}
-    \fancyfoot[R]{\footnotesize\color{MutedGray}\thepage}
+    \fancyfoot[R]{\footnotesize\sffamily\color{MutedGray}\thepage}
     \renewcommand{\headrulewidth}{0pt}
 }
 
-% --- ESTILO DE CAPÍTULOS Y SECCIONES ---
+% --- ESTILO DE CAPÍTULOS Y SECCIONES (Sans-serif editorial) ---
 \makeatletter
 \def\@makechapterhead#1{%
   \vspace*{20\p@}%
-  {\parindent \z@ \raggedright \normalfont
+  {\parindent \z@ \raggedright \sffamily
     \ifnum \c@secnumdepth >\m@ne
         \fontsize{11}{13}\selectfont\bfseries\color{CyanAccent}
         \MakeUppercase{\@chapapp\ \thechapter}
@@ -137,28 +165,36 @@
   }}
 \def\@makeschapterhead#1{%
   \vspace*{20\p@}%
-  {\parindent \z@ \raggedright
-    \normalfont
+  {\parindent \z@ \raggedright \sffamily
     \interlinepenalty\@M
     \fontsize{22}{26}\selectfont\bfseries\color{NavyPrimary} #1\par\nobreak
     \vskip 10\p@
     {\color{NavyPrimary}\hrule height 1.2pt}
     \vskip 24\p@
   }}
+\renewcommand\section{\@startsection {section}{1}{\z@}%
+                                   {-3.0ex \@plus -1ex \@minus -.2ex}%
+                                   {1.5ex \@plus.2ex}%
+                                   {\sffamily\Large\bfseries\color{NavyPrimary}}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}%
+                                     {-2.5ex\@plus -1ex \@minus -.2ex}%
+                                     {1.0ex \@plus .2ex}%
+                                     {\sffamily\large\bfseries\color{SlateText}}}
 \makeatother
 
 \color{SlateText}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.65em}
-\linespread{1.15}
+\linespread{1.25}
 \emergencystretch=1.8em
 
 \begin{document}
 
 % ==============================================================================
-% PORTADA ESTILO INFORME FINTECH / BANCA INSTITUCIONAL
+% PORTADA ESTILO EDITORIAL / BANCA INSTITUCIONAL
 % ==============================================================================
 \begin{titlepage}
+    \sffamily
     \thispagestyle{empty}
     \noindent
     \begin{minipage}[t]{0.5\textwidth}
@@ -222,6 +258,7 @@
 % ==============================================================================
 % ÍNDICES (MÁXIMO 60 PÁGINAS TOTALES SEGÚN NORMATIVA EBIS)
 % ==============================================================================
+\setcounter{tocdepth}{1}
 \tableofcontents
 % \listoffigures
 % \listoftables
