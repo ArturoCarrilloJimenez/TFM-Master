@@ -1,0 +1,49 @@
+\chapter{Introducción}
+
+\section{Contexto y motivación del problema}
+La modelización cuantitativa de los mercados financieros ha estado tradicionalmente dominada por el análisis técnico clásico y por enfoques estadísticos basados exclusivamente en series temporales endógenas. No obstante, en entornos caracterizados por una elevada liquidez y exposición informativa constante, la dinámica de los activos responde de forma asimétrica a flujos de información exógena no estructurada, tales como comunicados corporativos, eventos regulatorios, informes de analistas y noticias macroeconómicas.
+
+El presente Trabajo Fin de Máster (TFM) acota su estudio al universo bancario sistémico estadounidense, conocido como el \textbf{US Big 6}: JPMorgan Chase \& Co. (\texttt{JPM}), Bank of America Corp. (\texttt{BAC}), Wells Fargo \& Co. (\texttt{WFC}), Citigroup Inc. (\texttt{C}), The Goldman Sachs Group, Inc. (\texttt{GS}) y Morgan Stanley (\texttt{MS}). Este conjunto de entidades constituye un laboratorio idóneo por su alta profundidad de mercado, su sensibilidad a decisiones de política monetaria y la densidad de cobertura mediática que reciben diariamente.
+
+\begin{cajadestacada}[Pregunta central de investigación]
+\textit{«¿Podemos anticipar cambios de tendencia o picos de volatilidad en las acciones de los gigantes bancarios de EE.UU. combinando el histórico de precios con el tono de las noticias y eventos regulatorios antes de la apertura del mercado (09:30 AM ET)?»}
+\end{cajadestacada}
+
+Respecto al planteamiento inicial recogido en la propuesta del proyecto, el desarrollo empírico ha motivado una evolución arquitectónica sustancial. En lugar de depender de una única fuente histórica estática o de aplicar modelos de lenguaje directamente sobre textos sin depurar, el sistema se ha reestructurado hacia una \textbf{arquitectura multimodal e incremental} basada en el patrón \textit{Medallion} (\textit{Bronze}, \textit{Silver} y \textit{Gold}). Esta separación permite auditar sistemáticamente la calidad del dato crudo, aislar múltiples vectores de contaminación semántica y garantizar la trazabilidad completa entre cada evento informativo y su impacto sobre la sesión bursátil correspondiente.
+
+\section{Planteamiento del problema y justificación metodológica}
+El diseño de sistemas predictivos robustos en finanzas exige superar cuatro fallos metodológicos recurrentes en la literatura aplicada:
+
+\begin{enumerate}
+    \item \textbf{No estacionariedad de los precios absolutos:} El entrenamiento directo sobre niveles de precios introduce correlaciones espurias y degrada la capacidad de generalización fuera de muestra. Para mitigar este efecto, la formulación del problema se traslada al dominio de los retornos logarítmicos continuos ($r_{t+1} = \ln(C_{t+1}/C_t)$) y medidas de dispersión condicional.
+    \item \textbf{Sesgo de mirada al futuro (\textit{Look-Ahead Bias}):} La integración ingenua de noticias y precios suele asumir disponibilidad instantánea de la información, contaminando el conjunto de entrenamiento con señales posteriores al instante de decisión. Para erradicar esta fuga de información, se implementa una alineación temporal estricta \textit{Point-in-Time} (PiT) sincronizada con el calendario operativo de la Bolsa de Nueva York (NYSE).
+    \item \textbf{Ruido semántico y discontinuidad de mercado cerrado:} Los flujos de noticias financieras presentan duplicidades, colisiones de \textit{tickers} (por ejemplo, \texttt{GS} o \texttt{MS} dentro de palabras comunes), menciones periféricas en artículos multisujeto y sesgos derivados de revisiones de \textit{analyst ratings}. Asimismo, la acumulación de eventos durante fines de semana, festivos o registros sin hora exacta (\texttt{date\_only}) requiere un tratamiento específico alineado con las sesiones de mercado (\texttt{premarket}, \texttt{intraday}, \texttt{afterhours} y desplazamiento conservador a $t+1$).
+    \item \textbf{Insuficiencia de la predicción puntual:} Estimar únicamente el valor esperado de un retorno oculta la incertidumbre inherente al régimen de volatilidad vigente. La adopción de \textbf{regresión cuantílica} permite estimar bandas condicionales de probabilidad (cuantiles $q=0.10$ y $q=0.90$ para un intervalo empírico del 80\,\%), proporcionando una herramienta directamente accionable para la gestión de riesgo y el dimensionamiento de coberturas pre-apertura.
+\end{enumerate}
+
+\section{Objetivos del TFM}
+\subsection*{Objetivo general}
+Diseñar, implementar y validar un motor predictivo híbrido y multimodal para el universo bancario \textit{US Big 6} que integre series temporales cuantitativas con señales de sentimiento financiero depuradas, operando bajo una alineación temporal \textit{Point-in-Time} y un enfoque de regresión cuantílica para la estimación de rangos de retorno y riesgo.
+
+\subsection*{Objetivos específicos}
+\begin{itemize}
+    \item \textbf{OE1. Ingeniería de datos en capas:} Construir un pipeline reproducible estructurado bajo el patrón \textit{Medallion} (\textit{Bronze}, \textit{Silver} y \textit{Gold}) que integre series de mercado ajustadas, eventos regulatorios oficiales (SEC EDGAR) y corpus históricos y en vivo de noticias financieras.
+    \item \textbf{OE2. Auditoría y depuración semántica (Quality Gate):} Desarrollar un protocolo de filtrado mediante procesamiento de lenguaje natural para resolver colisiones de entidades, desduplicar registros, aislar contextos relevantes por entidad y neutralizar ruido fuera de dominio y \textit{analyst ratings}.
+    \item \textbf{OE3. Sincronización temporal Point-in-Time:} Implementar un motor de cruce temporal acoplado al calendario bursátil estadounidense (\texttt{America/New\_York}) que garantice ausencia total de fuga de información futura y modele adecuadamente los bloques de mercado cerrado.
+    \item \textbf{OE4. Modelado cuantílico multimodal:} Entrenar y calibrar modelos de regresión cuantílica capaces de estimar intervalos condicionales de retorno al 80\,\% de cobertura empírica para los seis activos del universo \textit{US Big 6}.
+    \item \textbf{OE5. Validación comparativa, explicabilidad y visualización:} Evaluar el desempeño mediante métricas de calibración de intervalos (\textit{Pinball Loss}, \textit{Winkler Score}) y estudios de ablación (modelo cuantitativo puro frente a modelo híbrido), complementando los resultados con explicabilidad (TreeSHAP) y un cuadro de mando operativo.
+\end{itemize}
+
+\section{Alcance y estructura de la memoria}
+El alcance de este trabajo comprende el diseño arquitectónico completo, la auditoría exploratoria de datos, la implementación de los pipelines de transformación y modelado, la validación estadística mediante particionado temporal estricto y la exposición de resultados a través de un cuadro de mando analítico en Streamlit. Quedan fuera del alcance la ejecución automatizada de órdenes en mercados reales (\textit{live execution}) y el modelado de microestructura de alta frecuencia (\textit{tick-by-tick}), los cuales se plantean como líneas futuras de evolución.
+
+La memoria se organiza en los siguientes capítulos:
+\begin{itemize}
+    \item \textbf{Capítulo 2 (Estado del Arte):} Revisión crítica de la literatura sobre análisis de sentimiento financiero, fusión multimodal de datos y modelado cuantílico en series temporales.
+    \item \textbf{Capítulo 3 (Arquitectura del Sistema, Modelo de Datos e Ingesta):} Descripción separada de la infraestructura \textit{Medallion} en Cloudflare R2, el modelo y estructura de datos por capa, las fuentes \textit{Bronze}, la arquitectura \textit{Clean} y el cumplimiento normativo.
+    \item \textbf{Capítulo 4 (Auditoría Exploratoria y Capa Silver):} Diagnóstico cuantitativo de ruido en capa \textit{Bronze}, funcionamiento del \textit{Gatekeeper} semántico, extracción de sentimiento y alineación \textit{Point-in-Time}.
+    \item \textbf{Capítulo 5 (Ingeniería de Características y Modelado):} Construcción de variables técnicas y cualitativas, selección con Boruta, formulación de regresión cuantílica y protocolo de validación temporal.
+    \item \textbf{Capítulo 6 (Experimentos, Resultados y Explicabilidad):} Evaluación de calibración de intervalos, estudio de ablación, análisis TreeSHAP y simulación de gestión de riesgo.
+    \item \textbf{Capítulo 7 (Despliegue y Visualización):} Orquestación productiva, aseguramiento de calidad (tests y análisis estático) e interfaz analítica desarrollada.
+    \item \textbf{Capítulo 8 (Conclusiones, Impacto y Líneas Futuras):} Síntesis de hallazgos, análisis de impacto económico/operativo (ROI) y trabajos futuros.
+\end{itemize}

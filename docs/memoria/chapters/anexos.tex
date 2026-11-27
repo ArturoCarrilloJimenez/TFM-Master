@@ -1,0 +1,17 @@
+\chapter{Esquemas de Datos y Reproducción del Entorno}
+
+\section{Catálogo de conjuntos de datos en Cloudflare R2}
+\textit{[Completar al cierre de Fase 3 con el esquema exacto de columnas y tipos de las capas Bronze, Silver y Gold.]}
+
+\section{Guía rápida de reproducción}
+El entorno completo del proyecto se reproduce de forma determinista mediante \texttt{uv}:
+
+\begin{lstlisting}
+# Clonar repositorio e instalar dependencias exactas
+git clone https://github.com/ArturoCarrilloJimenez/TFM-Master.git
+cd TFM-Master
+uv sync
+
+# Ejecutar la suite completa de pruebas unitarias
+uv run pytest src/test/ --cov=src --cov-report=term-missing
+\end{lstlisting}

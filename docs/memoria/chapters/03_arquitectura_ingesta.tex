@@ -1,0 +1,184 @@
+\chapter{Arquitectura del Sistema, Modelo de Datos e Ingesta (Capa Bronze)}
+
+\section{Arquitectura Cloud Always Free y flujo Medallion}
+Toda la infraestructura de almacenamiento, orquestación, cómputo y visualización del sistema ha sido diseñada en régimen \textbf{\textit{Always Free} (0,00\,€ de coste fijo)}, eliminando tarifas de transferencia (\textit{egress}) mediante \textbf{Cloudflare R2} (compatible con la API S3 Signature v4), inferencia diaria \textit{serverless} en AWS Lambda, orquestación en Apache Airflow, entrenamiento \textit{offline} en Google Colab (GPU T4) y cuadro de mando en Streamlit Community Cloud.
+
+La única partida de coste variable corresponde a la inferencia de sentimiento de noticias mediante la API de Anthropic (\texttt{claude-haiku-5-5}, modo \textit{Batch} con descuento del 50\,\%), que supuso \textbf{1,29\,USD totales} para procesar los 14 años históricos (y céntimos anuales en operación diaria). Esta decisión se adoptó tras demostrar empíricamente que \texttt{ProsusAI/finbert} en local (0\,€) colapsaba al 60,1\,\% de exactitud en noticias multi-entidad frente al 88,8\,\% del motor dirigido al \textit{ticker}. Al desacoplar la inferencia tras la interfaz abstracta \texttt{BaseSentimentEngine}, el sistema permite sustituir el proveedor en escenarios de escalado masivo por un modelo ligero destilado (\textit{Teacher--Student}) en CPU.
+
+El flujo de transformación entre estados del dato sigue estrictamente el patrón \textbf{Medallion} en tres etapas lógicas independientes:
+
+\begin{itemize}
+    \item \textbf{Capa Bronze (\texttt{raw/}):} Punto de entrada e inmutabilidad histórica en formato columnar Parquet con compresión \texttt{ZSTD}. Conserva las fuentes originales tras una higienización estructural mínima (deduplicación, normalización horaria y claves de trazabilidad), sin aplicar todavía poda semántica ni modelos predictivos.
+    \item \textbf{Capa Silver (\texttt{processed/}):} Etapa de refinamiento, filtrado semántico y enriquecimiento analítico. Desacopla la ejecución en ETLs modulares apoyados en cachés incrementales inmutables (\texttt{cat\_hash} e \texttt{input\_hash}) para evitar recomputar textos ya procesados, elimina columnas de texto crudo redundante (\textit{Compliance-by-Design}) y consolida la señal de sentimiento lista para agregación.
+    \item \textbf{Capa Gold (\texttt{gold/}):} Capa de consumo analítico y modelado. Ejecuta la fusión temporal \textit{Point-in-Time} sin fuga de información futura, calcula indicadores técnicos y de cobertura, y materializa las matrices tabulares $(X_t \rightarrow y_{t+1})$ para la regresión cuantílica y el cuadro de mando.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[node distance=0.85cm and 0.95cm]
+        % Columna 1: Fuentes
+        \node[tfmnode, text width=2.9cm] (src_mkt) {\textbf{Yahoo Finance}\\(\texttt{yfinance})\\3.522 sesiones};
+        \node[tfmnode, below=0.45cm of src_mkt, text width=2.9cm] (src_sec) {\textbf{SEC EDGAR + WSD}\\8-K, \texttt{EX-*} y 10-Q/10-K};
+        \node[tfmnode, below=0.45cm of src_sec, text width=2.9cm] (src_news) {\textbf{HF Multisource}\\DuckDB (21,4\,GB)\\89.846 noticias};
+
+        % Columna 2: Bronze
+        \node[tfmdata, right=0.95cm of src_sec, text width=2.5cm, minimum height=2.2cm] (bronze) {R2 Bronze\\\texttt{raw/}\\Parquet ZSTD\\NY ET + IDs};
+
+        % Columna 3: Silver
+        \node[tfmaccent, right=1.15cm of bronze, text width=3.1cm, minimum height=2.2cm] (silver) {Capa Silver\\\texttt{processed/}\\Gatekeeper v2\\+ Claude Haiku 5.5\\+ FinBERT SEC};
+
+        % Columna 4: Gold & Modelado
+        \node[tfmnode, right=1.65cm of silver, text width=3.0cm, minimum height=2.2cm] (gold) {\textbf{Capa Gold (\texttt{gold/})}\\Point-in-Time ($t+1$)\\Boruta + LightGBM/XGB\\Cuantiles $[0{,}10,\,0{,}90]$};
+
+        % Columna 5: Salida
+        \node[tfmaccent, right=1.25cm of gold, text width=2.5cm, minimum height=2.2cm] (out) {Consumo\\Streamlit Cloud\\Túnel 80\,\%\\+ TreeSHAP};
+
+        \draw[tfmarrow] (src_mkt.east) -- ++(0.35cm,0) |- ([yshift=0.55cm]bronze.west);
+        \draw[tfmarrow] (src_sec.east) -- (bronze.west);
+        \draw[tfmarrow] (src_news.east) -- ++(0.35cm,0) |- ([yshift=-0.55cm]bronze.west);
+        \draw[tfmarrow] (bronze) -- node[above, tfmlabel] {ETLs} (silver);
+        \draw[tfmarrow] (silver) -- node[above, tfmlabel] {\texttt{merge\_asof}} (gold);
+        \draw[tfmarrow] (gold) -- node[above, tfmlabel] {Parquet} (out);
+    \end{tikzpicture}%
+    }
+    \caption{Arquitectura integral del flujo de datos multimodal desde las fuentes externas hasta el modelado cuantílico y la visualización (capas Bronze, Silver y Gold).}
+    \label{fig:arquitectura_medallion}
+\end{figure}
+
+\section{Universo bancario y catálogo canónico}
+La fuente única de verdad para los seis bancos del estudio reside en \texttt{src/shared/tickets.py}, centralizando \textit{tickers}, códigos CIK oficiales de la SEC y alias semánticos para evitar colisiones léxicas:
+
+\begin{table}[H]
+    \centering
+    \caption{Universo bancario US Big 6 y cobertura consolidada en Capa Bronze (2010--2023).}
+    \label{tab:universo_big6}
+    \begin{tabular}{@{}llrr@{}}
+        \toprule
+        \textbf{Ticker} & \textbf{Entidad financiera} & \textbf{CIK SEC} & \textbf{Noticias Bronze} \\
+        \midrule
+        \texttt{JPM} & JPMorgan Chase \& Co.        & \texttt{0000019617} & 18.953 \\
+        \texttt{BAC} & Bank of America Corp.        & \texttt{0000070858} & 11.509 \\
+        \texttt{WFC} & Wells Fargo \& Company       & \texttt{0000072971} & 16.075 \\
+        \texttt{C}   & Citigroup Inc.               & \texttt{0000831001} &  8.647 \\
+        \texttt{GS}  & Goldman Sachs Group Inc.     & \texttt{0000886982} & 18.321 \\
+        \texttt{MS}  & Morgan Stanley               & \texttt{0000895421} & 16.341 \\
+        \midrule
+        \textbf{Total} & \textbf{6 entidades} & --- & \textbf{89.846} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{Estructura y modelo de datos por capa}
+De forma separada a la topología de infraestructura, el modelo de datos establece contratos explícitos de granularidad, claves de enlace e idempotencia para cada conjunto almacenado en Cloudflare R2 (Tabla~\ref{tab:modelo_datos_capas}). Todas las tablas se persisten en Parquet columnar (\texttt{ZSTD}) mediante \texttt{ParquetCompactor}.
+
+\begin{table}[H]
+    \centering
+    \caption{Modelo de datos, granularidad, claves de enlace y esquema principal por capa.}
+    \label{tab:modelo_datos_capas}
+    \scriptsize
+    \begin{tabularx}{\textwidth}{@{}l >{\raggedright\arraybackslash}p{3.9cm} >{\raggedright\arraybackslash}p{2.9cm} >{\raggedright\arraybackslash}X@{}}
+        \toprule
+        \textbf{Capa} & \textbf{Conjunto (\texttt{R2})} & \textbf{Granularidad / Clave} & \textbf{Variables principales y contratos} \\
+        \midrule
+        Bronze & \texttt{raw/yfinance/\allowbreak stocks\_2010\_2023.parquet} & 1 fila / sesión NYSE (\texttt{Date}) & 36 cols: \texttt{Open}, \texttt{High}, \texttt{Low}, \texttt{Close}, \texttt{Adj Close}, \texttt{Volume} por \textit{ticker} (3.522 sesiones). \\
+        Bronze & \texttt{raw/sec/\allowbreak 8k-2010-2023.parquet} & (\texttt{accession\_number}, \texttt{item}) & Metadatos SEC (\texttt{ticker}, \texttt{cik}, \texttt{filing\_date}, \texttt{acceptance\_date\_time}), \texttt{item}, \texttt{content}. \\
+        Bronze & \texttt{raw/sec/\allowbreak 8k-exhibits-\allowbreak 2010-2023.parquet} & (\texttt{accession\_number}, \texttt{exhibit\_url}) & Enlazada por \texttt{accession\_number}; \texttt{filing\_items}, \texttt{exhibit\_type}, \texttt{exhibit\_size}, \texttt{content}. \\
+        Bronze & \texttt{raw/sec/\allowbreak 10k-10q-2010-2023.parquet} & 1 fila / \textit{filing} (\texttt{accession\_number}) & Catálogo histórico de informes periódicos 10-Q y 10-K (336 registros). \\
+        Bronze & \texttt{raw/huggingface/\allowbreak multisource\_\allowbreak bancos\_2010\_2023.parquet} & (\texttt{ticker}, \texttt{date}, \texttt{title}) $\rightarrow$ \texttt{record\_id} & 16 cols: \texttt{record\_id} (SHA-256 24 hex), \texttt{datetime} (\texttt{America/New\_York}), \texttt{has\_exact\_time}, \texttt{market\_session}, \texttt{title}, \texttt{article}, \texttt{ticker\_count}, \texttt{is\_multisubject}. \\
+        Silver & \texttt{processed/\allowbreak huggingface/\allowbreak categorizer\_\allowbreak cache.parquet} & \texttt{cat\_hash} (SHA-256) & Caché inmutable de categorización: \texttt{process\_text}, \texttt{category}, \texttt{confianza}, \texttt{is\_ruido}. \\
+        Silver & \texttt{processed/\allowbreak huggingface/\allowbreak sentiment\_\allowbreak cache.parquet} & \texttt{input\_hash} (SHA-256 64 hex) & Caché LLM por (\texttt{ticker}, \texttt{model}, \texttt{prompt\_ver}, contexto): \texttt{sentiment\_label}, \texttt{sentiment\_score}, \texttt{p\_pos/neg/neu}, \texttt{sentiment\_motivo}, tokens. \\
+        Silver & \texttt{processed/\allowbreak huggingface/\allowbreak multisource\_\allowbreak bancos\_2010\_2023.parquet} & 1 fila / noticia útil (\texttt{record\_id}) & 24 cols (27.350 filas): poda \texttt{text}, \texttt{article}, \texttt{publisher}, \texttt{url}, \texttt{source\_dataset}; une categorización y sentimiento vía \texttt{input\_hash}. \\
+        Gold & \texttt{gold/} (Fase 3) & (\texttt{ticker}, \texttt{session\_date}) & Matriz tabular $(X_t \rightarrow y_{t+1})$ tras fusión \textit{Point-in-Time}, indicadores técnicos y señales depuradas. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\paragraph{Trazabilidad temporal y regla conservadora $t+1$:}
+En el esquema de noticias, cada registro conserva la bandera booleana \texttt{has\_exact\_time} y su franja horaria de Wall Street (\texttt{market\_session} $\in$ \{\texttt{premarket}, \texttt{intraday}, \texttt{afterhours}, \texttt{date\_only}\}). Para erradicar cualquier sesgo de mirada al futuro en la transición hacia Gold, los registros sin marca horaria exacta (\texttt{has\_exact\_time=False}, etiquetados como \texttt{date\_only}) \textbf{se desplazan sistemáticamente al día hábil siguiente ($t+1$)}, garantizando que ninguna noticia potencialmente publicada tras el cierre de la jornada $t$ contamine la sesión de ese mismo día.
+
+\section{Fuentes de datos, iteración e ingesta multimodal (2010--2023)}
+La construcción de una base histórica homogénea de 14 años para los seis bancos exigió auditar y rediseñar las fuentes originales tras detectar déficits graves de cobertura y estructura en las primeras versiones:
+
+\begin{itemize}
+    \item \textbf{Cotizaciones bursátiles (\texttt{src/mercado/yfinance\_extractor.py}):} Descarga histórica diaria mediante \href{https://github.com/ranaroussi/yfinance}{\texttt{yfinance}}~\cite{aroussi_yfinance} (\texttt{auto\_adjust=False}) sobre \href{https://finance.yahoo.com/}{Yahoo Finance}, preservando precios nominales y ajustados por \textit{splits} y dividendos tras aplanar el \textit{MultiIndex} de columnas. El conjunto consolidado en \texttt{raw/yfinance/\allowbreak stocks\_2010\_2023.parquet} cubre \textbf{3.522 sesiones} (2010--2023, 36 columnas) sin duplicados ni valores nulos.
+
+    \item \textbf{Eventos regulatorios SEC EDGAR (\texttt{src/sec/}):} Descubrimiento mediante la \href{https://www.sec.gov/search-filings/edgar-application-programming-interfaces}{API REST oficial de SEC EDGAR}~\cite{sec_edgar_api} respetando la política \textit{Fair Access} ($\le 10$ req/s) y resolución dinámica de CIKs (\texttt{SECEdgarAdapter}). Para la descarga masiva de documentos HTML sin saturar la red ni reinventar infraestructura de colas, el orquestador \texttt{SECHistoricalETL} serializa tareas declarativas (\texttt{ScraperTask}) y las despacha por lotes mediante \texttt{ScraperProducerAdapter} (\texttt{HTTP 202 Accepted} con reintentos exponenciales) hacia \href{https://github.com/ArturoCarrilloJimenez/WebScrapingDistributed}{\textbf{WebScrapingDistributed}}~\cite{carrillo2026webscrapingdistributed}, una plataforma distribuida previa de alto volumen reutilizada para descarga asíncrona, inyección de \texttt{User-Agent} y gestión de reintentos. Posteriormente, \texttt{ETLProcesRawData8K} consume la zona intermedia del \textit{scraper} y consolida los datos en R2. En una primera iteración se ingirieron los informes 10-Q/10-K (\texttt{10k-10q-2010-2023.parquet}: 336 \textit{filings}) y únicamente los documentos primarios de Form 8-K (\texttt{8k-2010-2023.parquet}: 5.424 ítems en 2.903 \textit{filings} únicos). Sin embargo, al auditar posteriormente FinBERT sobre \texttt{Item 2.02} (resultados trimestrales), se descubrió un \textbf{\textit{Data Coverage Gap}} estructural: la mayoría de los 8-K primarios son meras carátulas procedimentales (\textit{announcement-only}) que remiten las cifras financieras reales a anexos externos (\texttt{EX-99.1}). Para resolverlo sin romper el esquema previo, se configuraron reglas \texttt{follow\_links} sobre los índices de EDGAR para que el \textit{scraper} descargase de forma desacoplada \textbf{5.531 anexos \texttt{EX-*}} en \texttt{raw/sec/\allowbreak 8k-exhibits-2010-2023.parquet} (enlazados por \texttt{accession\_number}, excluyendo XBRL técnicos \texttt{EX-101.*}), como se aprecia en la Figura~\ref{fig:sec_8k_vs_exhibits}.
+
+    \item \textbf{Noticias financieras (\texttt{src/articulos/etl\_multisource.py}):} La ingesta inicial con el corpus \href{https://huggingface.co/datasets/Zihan1004/FNSPID}{\textit{FNSPID}} v1~\cite{dong2024fnspid} reveló en el EDA graves lagunas temporales (ausencia completa de años enteros en entidades clave como \texttt{JPM} en 2010--2017 y 2021--2023, o \texttt{BAC} en 2010--2013 y 2021--2023). Una segunda iteración de rescate (\textit{FNSPID} v2 sobre \textit{All\_external.csv}) amplió el volumen bruto a 540.156 registros y expuso colisiones léxicas severas (como \texttt{MS} confundido con \textit{Multiple Sclerosis}), pero mantenía heterogeneidad entre titular y cuerpo. Finalmente se migró a un pipeline \textit{pushdown} en DuckDB sobre 21,4\,GB crudos del repositorio \href{https://huggingface.co/datasets/Brianferrell787/financial-news-multisource}{\textit{financial-news-multisource}}~\cite{ferrell_multisource}, unificando cuatro fuentes (\texttt{fnspid\_news}, \texttt{benzinga\_6000stocks}, \texttt{sentarl\_combined} y \texttt{yahoo\_finance\_felixdrinkall}). Esta versión definitiva erradicó los años vacíos en los seis bancos (\textbf{89.846 noticias} en \texttt{raw/huggingface/\allowbreak multisource\_bancos\_2010\_2023.parquet}; véase la Figura~\ref{fig:comparativa_cobertura_noticias}), desacoplando \texttt{title} y \texttt{article}, filtrando falsos positivos de Citigroup (\texttt{C}) y normalizando las marcas horarias a \texttt{America/New\_York}.
+\end{itemize}
+
+\begin{table}[H]
+    \centering
+    \caption{Catálogo de acceso directo a las fuentes externas y destinos en Capa Bronze (R2).}
+    \label{tab:fuentes_bronze}
+    \footnotesize
+    \begin{tabularx}{\textwidth}{@{}l >{\raggedright\arraybackslash}p{4.3cm} >{\raggedright\arraybackslash}X r@{}}
+        \toprule
+        \textbf{Dominio} & \textbf{Fuente / Acceso directo} & \textbf{Destino en R2 (\texttt{raw/})} & \textbf{Volumen} \\
+        \midrule
+        Mercado & \href{https://github.com/ranaroussi/yfinance}{\texttt{yfinance}} (\href{https://finance.yahoo.com/}{Yahoo Finance})~\cite{aroussi_yfinance} & \texttt{yfinance/\allowbreak stocks\_2010\_2023.parquet} & 3.522 ses. \\
+        SEC EDGAR & \href{https://www.sec.gov/search-filings/edgar-application-programming-interfaces}{SEC EDGAR REST API}~\cite{sec_edgar_api} & \texttt{sec/8k-2010-2023.parquet} + \texttt{8k-exhibits-...} + \texttt{10k-10q-...} & 5.424 + 5.531 + 336 \\
+        Scraper SEC & \href{https://github.com/ArturoCarrilloJimenez/WebScrapingDistributed}{WebScrapingDistributed}~\cite{carrillo2026webscrapingdistributed} & Zona intermedia S3/R2 de HTML 8-K y \texttt{EX-*} & 2.908 \textit{filings} \\
+        Noticias (v1/v2) & \href{https://huggingface.co/datasets/Zihan1004/FNSPID}{Hugging Face: FNSPID}~\cite{dong2024fnspid} & Iteración exploratoria descartada (huecos) & --- \\
+        Noticias (final) & \href{https://huggingface.co/datasets/Brianferrell787/financial-news-multisource}{HF: financial-news-multisource}~\cite{ferrell_multisource} & \texttt{huggingface/\allowbreak multisource\_\allowbreak bancos\_2010\_2023.parquet} & 89.846 art. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[node distance=1.1cm and 1.15cm]
+        \node[tfmnode, text width=2.5cm] (edgar) {\textbf{SEC EDGAR API}\\REST + CIK\\($\le 10$ req/s)};
+        \node[tfmnode, right=of edgar, text width=2.8cm] (etl) {\textbf{SECHistoricalETL}\\Genera \texttt{ScraperTask}\\+ \texttt{follow\_links}};
+        \node[tfmaccent, right=of etl, text width=3.5cm] (wsd) {WebScrapingDistributed\\Producer (\texttt{202}) $\rightarrow$ SQS\\Workers (\texttt{static\_css})};
+        \node[tfmnode, right=of wsd, text width=2.8cm] (proc) {\textbf{ETLProcesRaw8K}\\Segmenta ítems\\y extrae \texttt{EX-*}};
+
+        \node[tfmdata, below=1.1cm of etl, text width=2.7cm] (r210k) {R2 Bronze\\\texttt{10k-10q} (336)};
+        \node[tfmdata, below=1.1cm of wsd, text width=3.2cm] (r28k) {R2 Bronze\\\texttt{8k-2010-2023} (5.424)};
+        \node[tfmdata, below=1.1cm of proc, text width=3.1cm] (r2ex) {R2 Bronze\\\texttt{8k-exhibits} (5.531)};
+
+        \draw[tfmarrow] (edgar) -- (etl);
+        \draw[tfmarrow] (etl) -- node[above, tfmlabel] {lotes 100} (wsd);
+        \draw[tfmarrow] (wsd) -- node[above, tfmlabel] {S3 raw} (proc);
+        \draw[tfmarrow] (etl) -- node[left, tfmlabel] {10-Q/10-K} (r210k);
+        \coordinate (split) at ([yshift=-0.48cm]proc.south);
+        \draw[draw=NavyPrimary, line width=0.85pt] (proc.south) -- (split);
+        \draw[tfmarrow] (split) -| node[pos=0.25, above, tfmlabel] {ítems 8-K} (r28k.north);
+        \draw[tfmarrow] (split) -- node[right, tfmlabel] {\texttt{EX-99.1 / EX-*}} (r2ex.north);
+        \draw[dashed, draw=CyanAccent, line width=0.85pt] (r28k.south) -- ++(0,-0.28cm) -| node[pos=0.25, below, tfmlabel] {enlace por \texttt{accession\_number}} (r2ex.south);
+    \end{tikzpicture}%
+    }
+    \caption{Flujo de ingesta distribuida de eventos regulatorios SEC EDGAR integrando \texttt{WebScrapingDistributed} y persistencia desacoplada de anexos en Cloudflare R2.}
+    \label{fig:flujo_sec_distribuido}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{bronze_sec_8k_vs_exhibits}
+    \caption{Contraste de longitud textual entre carátulas \texttt{Item 2.02} y anexos \texttt{EX-99*} (izquierda) y evolución anual de anexos 8-K rescatados en SEC EDGAR (derecha).}
+    \label{fig:sec_8k_vs_exhibits}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.95\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{bronze_fnspid_v1_cobertura_anual}
+        \caption{Iteración inicial (\textit{FNSPID} v1): discontinuidad temporal y años completos sin cobertura por banco.}
+        \label{fig:cobertura_fnspid_v1}
+    \end{subfigure}
+    \vspace{0.6em}
+    \begin{subfigure}[b]{0.95\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{bronze_multisource_cobertura_anual}
+        \caption{Versión consolidada (\textit{Multisource} DuckDB): cobertura continua 2010--2023 sin lagunas en el universo US Big 6.}
+        \label{fig:cobertura_multisource}
+    \end{subfigure}
+    \caption{Evolución de la cobertura histórica anual de noticias financieras entre la ingesta inicial y la arquitectura definitiva en Capa Bronze.}
+    \label{fig:comparativa_cobertura_noticias}
+\end{figure}
+
+\section{Diseño modular, Clean Architecture y cumplimiento normativo}
+El código fuente sigue una separación estricta en capas (\textit{Dominio}, \textit{Casos de Uso/ETLs}, \textit{Infraestructura} e \textit{Inyección de Dependencias} en \texttt{src/dependencies/}), reutilizando de forma centralizada la compactación columnar en memoria (\texttt{ParquetCompactor} con PyArrow \texttt{ZSTD}) y el repositorio asíncrono S3/R2 (\texttt{S3StorageRepository}). Asimismo, el sistema cumple un diseño \textit{Compliance-by-Design} amparado en la excepción de minería de textos con fines académicos (Directiva UE 2019/790, Art.~3), inferencia efímera y ausencia total de datos personales (exención RGPD).
